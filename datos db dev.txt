@@ -1,0 +1,9 @@
+docker run -d --name ondra-postgres -e POSTGRES_DB=ondra_monitor -e POSTGRES_USER=ondra -e POSTGRES_PASSWORD=secret -p 5432:5432 postgres:16
+
+
+11:45:06 [info] ─────────────────────────────────────────────
+11:45:06 [info] Usuario admin creado:
+11:45:06 [info]   Email:      admin@ondra.com.ar
+11:45:06 [info]   Contraseña: Admin1234!
+11:45:06 [info]   ⚠ Guardá esta contraseña — no se volverá a mostrar.
+11:45:06 [info] ─────────────────────────────────────────────
