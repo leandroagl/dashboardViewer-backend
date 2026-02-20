@@ -156,3 +156,17 @@ export async function exportLogsCsv(filters: Omit<LogFilters, 'page' | 'limit'>)
 
   return [header, ...rows].join('\n');
 }
+
+/** Elimina todos los registros de audit_logs (o por filtro de fecha) */
+export async function purgeLogs(antes_de?: string): Promise<number> {
+  let result;
+  if (antes_de) {
+    result = await pool.query(
+      `DELETE FROM audit_logs WHERE timestamp < $1`,
+      [antes_de]
+    );
+  } else {
+    result = await pool.query(`DELETE FROM audit_logs`);
+  }
+  return result.rowCount ?? 0;
+}

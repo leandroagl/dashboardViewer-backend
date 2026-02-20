@@ -1,9 +1,12 @@
 // ─── Controller de Logs de Auditoría ─────────────────────────────────────────
 
 import { Request, Response } from 'express';
-import { sendOk, sendServerError } from '../../utils/response';
+import { sendError, sendOk, sendServerError } from '../../utils/response';
 import { logger } from '../../utils/logger';
 import * as LogsService from './logs.service';
+import { pool } from '../../config/database/pool';
+import { AuditAction, AuditResult } from '../../types';
+import { audit, getClientIp } from '../../middleware/auditLogger';
 
 const PAGE_SIZE = 50;
 
@@ -70,3 +73,21 @@ export async function exportCsv(req: Request, res: Response): Promise<void> {
     sendServerError(res);
   }
 }
+
+export async function purgeLogsHandler(req: Request, res: Response): Promise<void> {
+  try {
+    const { antes_de } = req.query;
+    const deleted = await LogsService.purgeLogs(antes_de as string | undefined);
+    await audit({
+      usuario_id: req.user!.sub, email: req.user!.email, cliente_id: undefined,
+      accion: AuditAction.LOGS_PURGE, ip_origen: getClientIp(req), resultado: AuditResult.OK,
+    });
+    sendOk(res, { deleted });
+  } catch (err) {
+    logger.error('Error al purgar logs', { error: err });
+    sendServerError(res);
+  }
+}
+
+
+

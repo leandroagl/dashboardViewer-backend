@@ -8,6 +8,7 @@ import { sendOk, sendError, sendServerError } from '../../utils/response';
 import { logger } from '../../utils/logger';
 import * as UsersService from './users.service';
 import { revokeKioskSession } from '../auth/auth.service';
+import { pool } from '../../config/database/pool';
 
 export const createUserValidators = [
   body('email').isEmail().withMessage('Email inválido.'),
@@ -151,6 +152,21 @@ export async function revokeKiosk(req: Request, res: Response): Promise<void> {
     sendOk(res, { message: 'Sesión kiosk revocada.' });
   } catch (err) {
     logger.error('Error al revocar sesión kiosk', { error: err });
+    sendServerError(res);
+  }
+}
+
+export async function deleteUserHandler(req: Request, res: Response): Promise<void> {
+  try {
+    const { id } = req.params;
+    // No permitir auto-eliminación
+    if (id === req.user!.sub) {
+      sendError(res, 400, 'No podés eliminar tu propio usuario.');
+      return;
+    }
+    await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
+    sendOk(res, { deleted: true });
+  } catch (err) {
     sendServerError(res);
   }
 }

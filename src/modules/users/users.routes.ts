@@ -16,5 +16,6 @@ router.patch('/:id',                    UsersController.update);
 router.patch('/:id/status',             UsersController.setStatus);
 router.post('/:id/reset-password',      UsersController.resetPassword);
 router.post('/:id/revoke-kiosk',        UsersController.revokeKiosk);
+router.delete('/users/:id', authenticate, requireAdmin, UsersController.deleteUserHandler);
 
 export default router;

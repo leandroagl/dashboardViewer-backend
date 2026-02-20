@@ -22,6 +22,7 @@ export enum AuditAction {
   PASSWORD_RESET     = 'password_reset',
   ACCESS_DENIED      = 'acceso_denegado',
   CONFIG_MODIFIED    = 'config_modificada',
+  LOGS_PURGE = 'logs_purge',
 }
 
 export enum AuditResult {

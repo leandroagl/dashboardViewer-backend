@@ -15,5 +15,7 @@ router.get('/:id',        ClientsController.getOne);
 router.post('/',          ClientsController.createClientValidators, validate, ClientsController.create);
 router.patch('/:id',      ClientsController.updateClientValidators, validate, ClientsController.update);
 router.patch('/:id/status', ClientsController.setStatus);
+router.delete('/clients/:id', authenticate, requireAdmin, ClientsController.deleteClientHandler);
+
 
 export default router;

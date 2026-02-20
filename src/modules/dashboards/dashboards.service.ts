@@ -219,7 +219,7 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
   return result;
 }
 
-// ─── Dashboard: Backups Veeam ─────────────────────────────────────────────────
+// ─── Dashboard: Backups ───────────────────────────────────────────────────────
 export interface BackupJob {
   name:        string;
   lastStatus:  SensorStatus;
@@ -227,9 +227,17 @@ export interface BackupJob {
   lastValue:   string;
 }
 
+export interface BackupDevice {
+  name:    string;
+  type:    'veeam' | 'qnap' | 'other';
+  status:  SensorStatus;
+  jobs:    BackupJob[];
+  alerts:  { name: string; message: string }[];
+}
+
 export interface BackupsDashboard {
   successRate7d: number;
-  jobs:          BackupJob[];
+  devices:       BackupDevice[];
   alerts:        { name: string; message: string }[];
 }
 
@@ -241,22 +249,48 @@ export async function getBackupsDashboard(prtgGroup: string): Promise<BackupsDas
   const all     = await getSensorsByGroup(prtgGroup);
   const sensors = filterBySubgroup(all, "backups");
 
-  logger.debug("Backup sensors", { count: sensors.length });
+  logger.debug("Backup sensors", {
+    count:   sensors.length,
+    devices: [...new Set(sensors.map(s => s.device))],
+  });
 
-  const jobs: BackupJob[] = sensors.map((s) => ({
-    name:        s.device ? `${s.device} — ${s.name}` : s.name,
-    lastStatus:  normalizePrtgStatus(s.status_raw),
-    lastMessage: s.message,
-    lastValue:   s.lastvalue,
-  }));
+  // Agrupar sensores por dispositivo
+  const deviceMap = new Map<string, PrtgSensor[]>();
+  for (const s of sensors) {
+    const key = s.device || s.name;
+    if (!deviceMap.has(key)) deviceMap.set(key, []);
+    deviceMap.get(key)!.push(s);
+  }
 
-  const okCount      = jobs.filter((j) => j.lastStatus === "ok").length;
-  const successRate7d = jobs.length > 0 ? Math.round((okCount / jobs.length) * 100) : 0;
-  const alerts        = jobs
-    .filter((j) => j.lastStatus === "error" || j.lastStatus === "warning")
-    .map((j) => ({ name: j.name, message: j.lastMessage }));
+  const devices: BackupDevice[] = [];
 
-  const result: BackupsDashboard = { successRate7d, jobs, alerts };
+  for (const [deviceName, deviceSensors] of deviceMap) {
+    const type: BackupDevice['type'] = /qnap/i.test(deviceName) ? 'qnap'
+      : /veeam/i.test(deviceName) ? 'veeam' : 'other';
+
+    const jobs: BackupJob[] = deviceSensors.map(s => ({
+      name:        s.name,
+      lastStatus:  normalizePrtgStatus(s.status_raw),
+      lastMessage: s.message,
+      lastValue:   s.lastvalue,
+    }));
+
+    const worstRaw = Math.max(...deviceSensors.map(s => s.status_raw));
+    const alerts   = jobs
+      .filter(j => j.lastStatus === 'error' || j.lastStatus === 'warning')
+      .map(j => ({ name: j.name, message: j.lastMessage }));
+
+    devices.push({ name: deviceName, type, status: normalizePrtgStatus(worstRaw), jobs, alerts });
+  }
+
+  // Tasa de éxito global solo sobre jobs de Veeam
+  const veeamJobs = devices.filter(d => d.type === 'veeam').flatMap(d => d.jobs);
+  const okCount   = veeamJobs.filter(j => j.lastStatus === 'ok').length;
+  const successRate7d = veeamJobs.length > 0 ? Math.round((okCount / veeamJobs.length) * 100) : 0;
+
+  const allAlerts = devices.flatMap(d => d.alerts);
+
+  const result: BackupsDashboard = { successRate7d, devices, alerts: allAlerts };
   setCache(cacheKey, result);
   return result;
 }
