@@ -36,7 +36,6 @@ export async function getAvailableDashboards(prtgGroup: string): Promise<Dashboa
 
   const sensors = await getSensorsByGroup(prtgGroup);
   const subgroups = [...new Set(sensors.map((s) => s.group).filter(Boolean))];
-  logger.debug("PRTG subgroups found", { prtgGroup, subgroups });
 
   const available: DashboardType[] = [];
   for (const subgroup of subgroups) {
@@ -102,15 +101,10 @@ export interface VmwareDashboard {
 export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashboard> {
   const cacheKey = `vmware:${prtgGroup}`;
   const cached = getCached<VmwareDashboard>(cacheKey, CACHE_TTL_MS);
-  if (cached) { logger.debug('VMware dashboard (cache hit)', { prtgGroup }); return cached; }
+  if (cached) return cached;
 
   const all     = await getSensorsByGroup(prtgGroup);
   const sensors = filterBySubgroup(all, "servers");
-
-  logger.debug("VMware sensors", {
-    count:   sensors.length,
-    devices: [...new Set(sensors.map((s) => s.device))],
-  });
 
   const deviceMap = new Map<string, PrtgSensor[]>();
   for (const s of sensors) {
@@ -158,7 +152,6 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
           memValue  = memCh.lastvalue;
           memStatus = memPct > 95 ? 'error' : memPct > 85 ? 'warning' : 'ok';
         }
-        logger.debug('Host Performance channels', { device, cpuPct, memPct });
       } else {
         // Fallback: extraer desde el mensaje del sensor si el canal falló
         const msg    = (hostPerfSensor.message ?? '').replace(/<[^>]+>/g, '').trim();
@@ -246,15 +239,10 @@ export interface BackupsDashboard {
 export async function getBackupsDashboard(prtgGroup: string): Promise<BackupsDashboard> {
   const cacheKey = `backups:${prtgGroup}`;
   const cached = getCached<BackupsDashboard>(cacheKey, CACHE_TTL_MS);
-  if (cached) { logger.debug('Backups dashboard (cache hit)', { prtgGroup }); return cached; }
+  if (cached) return cached;
 
   const all     = await getSensorsByGroup(prtgGroup);
   const sensors = filterBySubgroup(all, "backups");
-
-  logger.debug("Backup sensors", {
-    count:   sensors.length,
-    devices: [...new Set(sensors.map(s => s.device))],
-  });
 
   // Agrupar sensores por dispositivo
   const deviceMap = new Map<string, PrtgSensor[]>();
@@ -312,15 +300,10 @@ export interface NetworkingDashboard {
 export async function getNetworkingDashboard(prtgGroup: string): Promise<NetworkingDashboard> {
   const cacheKey = `networking:${prtgGroup}`;
   const cached = getCached<NetworkingDashboard>(cacheKey, CACHE_TTL_MS);
-  if (cached) { logger.debug('Networking dashboard (cache hit)', { prtgGroup }); return cached; }
+  if (cached) return cached;
 
   const all     = await getSensorsByGroup(prtgGroup);
   const sensors = filterBySubgroup(all, "networking");
-
-  logger.debug("Networking sensors", {
-    count:   sensors.length,
-    devices: [...new Set(sensors.map((s) => s.device))],
-  });
 
   const deviceMap = new Map<string, NetworkDevice>();
 
@@ -367,15 +350,10 @@ export interface WindowsDashboard {
 export async function getWindowsDashboard(prtgGroup: string): Promise<WindowsDashboard> {
   const cacheKey = `windows:${prtgGroup}`;
   const cached = getCached<WindowsDashboard>(cacheKey, CACHE_TTL_MS);
-  if (cached) { logger.debug('Windows dashboard (cache hit)', { prtgGroup }); return cached; }
+  if (cached) return cached;
 
   const all     = await getSensorsByGroup(prtgGroup);
   const sensors = filterBySubgroup(all, "windows");
-
-  logger.debug("Windows sensors", {
-    count:   sensors.length,
-    devices: [...new Set(sensors.map((s) => s.device))],
-  });
 
   const serverMap = new Map<string, {
     cpu?: PrtgSensor; memory?: PrtgSensor; disk?: PrtgSensor; uptime?: PrtgSensor; worstStatus: number;

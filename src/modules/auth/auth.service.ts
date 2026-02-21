@@ -198,7 +198,6 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   let accessToken: string;
 
   if (shouldRotate) {
-    logger.debug('Rotando refresh token (vence en menos de 24hs)', { sub: payload.sub, hoursLeft });
     const pair = generateTokenPair(cleanPayload as JwtPayload, payload.es_kiosk ?? false);
     newRefreshToken = pair.refreshToken;
     refreshExpiry   = pair.refreshExpiry;
