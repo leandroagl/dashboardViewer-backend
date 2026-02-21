@@ -87,9 +87,6 @@ async function prtgGet<T>(
   }
 
   const url = `${env.prtg.baseUrl}${endpoint}?${params.toString()}`;
-  logger.debug("PRTG request", {
-    url: url.replace(/apitoken=[^&]+/, "apitoken=***"),
-  });
 
   const controller = new AbortController();
   const timeoutId  = setTimeout(() => controller.abort(), 15_000);
@@ -165,12 +162,6 @@ export async function getSensorsByGroup(
   );
 
   const sensors = results.flat();
-
-  logger.debug("PRTG sensors found", {
-    group:  groupName,
-    count:  sensors.length,
-    sample: sensors.slice(0, 3).map((s) => ({ name: s.name, group: s.group })),
-  });
 
   setCache(cacheKey, sensors);
   return sensors;
