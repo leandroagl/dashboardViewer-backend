@@ -88,6 +88,7 @@ export interface VmwareHost {
   uptime:     string;
   cpu:        { value: string; pct: number; status: SensorStatus };
   memory:     { value: string; pct: number; status: SensorStatus };
+  disk:       { read: { value: string; status: SensorStatus }; write: { value: string; status: SensorStatus } };
   vms:        { name: string; cpuPct: number; status: SensorStatus }[];
   datastores: { name: string; freePct: number; usedPct: number; status: SensorStatus }[];
   alerts:     { name: string; message: string; status: SensorStatus }[];
@@ -136,11 +137,15 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
 
     let cpuPct = 0, cpuValue = 'N/A', cpuStatus: SensorStatus = 'unknown';
     let memPct = 0, memValue = 'N/A', memStatus: SensorStatus = 'unknown';
+    let diskReadValue = 'N/A', diskReadStatus: SensorStatus = 'unknown';
+    let diskWriteValue = 'N/A', diskWriteStatus: SensorStatus = 'unknown';
 
     if (hostPerfSensor) {
       if (channels) {
-        const cpuCh = channels.find(c => /^cpu usage$/i.test(c.name));
-        const memCh = channels.find(c => /^memory consumed/i.test(c.name));
+        const cpuCh       = channels.find(c => /^cpu usage$/i.test(c.name));
+        const memCh       = channels.find(c => /^memory consumed/i.test(c.name));
+        const diskReadCh  = channels.find(c => /disk.*read|read.*rate/i.test(c.name));
+        const diskWriteCh = channels.find(c => /disk.*write|write.*rate/i.test(c.name));
 
         if (cpuCh) {
           cpuPct    = parseLastValue(cpuCh.lastvalue);
@@ -151,6 +156,14 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
           memPct    = parseLastValue(memCh.lastvalue);
           memValue  = memCh.lastvalue;
           memStatus = memPct > 95 ? 'error' : memPct > 85 ? 'warning' : 'ok';
+        }
+        if (diskReadCh) {
+          diskReadValue  = diskReadCh.lastvalue;
+          diskReadStatus = normalizePrtgStatus(hostPerfSensor.status_raw);
+        }
+        if (diskWriteCh) {
+          diskWriteValue  = diskWriteCh.lastvalue;
+          diskWriteStatus = normalizePrtgStatus(hostPerfSensor.status_raw);
         }
       } else {
         // Fallback: extraer desde el mensaje del sensor si el canal falló
@@ -199,6 +212,10 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
       uptime:     uptimeSensor?.lastvalue ?? "N/A",
       cpu:        { value: cpuValue, pct: cpuPct, status: cpuStatus },
       memory:     { value: memValue, pct: memPct, status: memStatus },
+      disk:       {
+        read:  { value: diskReadValue,  status: diskReadStatus  },
+        write: { value: diskWriteValue, status: diskWriteStatus },
+      },
       vms,
       datastores,
       alerts:     hostAlerts,
