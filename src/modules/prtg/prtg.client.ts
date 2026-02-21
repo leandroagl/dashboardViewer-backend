@@ -6,61 +6,57 @@
 import https from "https";
 import { env } from "../../config/env";
 import { logger } from "../../utils/logger";
+import { getCached, setCache } from "../../utils/cache";
 import fetch from "node-fetch";
 
-// ─── Cache simple en memoria ──────────────────────────────────────────────────
-const cache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL_MS = 55_000; // 55 segundos
-
-export function getCached<T>(key: string): T | null {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    cache.delete(key);
-    return null;
-  }
-  return entry.data as T;
-}
-
-export function setCache(key: string, data: any): void {
-  cache.set(key, { data, timestamp: Date.now() });
-}
-
-
 
 // ─── Tipos de respuesta PRTG ─────────────────────────────────────────────────
 
 export interface PrtgSensor {
-  objid: number;
-  name: string;
-  device: string;
-  group: string;
-  status: string; // "Up", "Down", "Warning", "Unknown", "Paused", "Unusual"
+  objid:      number;
+  name:       string;
+  device:     string;
+  group:      string;
+  probe:      string;
+  status:     string; // "Up", "Down", "Warning", "Unknown", "Paused", "Unusual"
   status_raw: number;
-  lastvalue: string;
-  message: string;
-  tags: string;
-  probe: string;
+  lastvalue:  string;
+  message:    string;
+  tags:       string;
 }
 
 export interface PrtgTableResponse {
-  sensors: PrtgSensor[];
+  sensors:  PrtgSensor[];
   treesize: number;
 }
 
 export interface PrtgSensorDetail {
   sensordata: {
-    name: string;
+    name:       string;
     statustext: string;
-    lastvalue: string;
-    message: string;
+    lastvalue:  string;
+    message:    string;
   };
+}
+
+export interface PrtgChannel {
+  name:          string;
+  lastvalue:     string;
+  lastvalue_raw: number;
+}
+
+interface PrtgChannelResponse {
+  channels: PrtgChannel[];
 }
 
 // ─── Cliente ─────────────────────────────────────────────────────────────────
 
-// Agente HTTPS que ignora certificados auto-firmados (común en PRTG on-premise)
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+// Agente HTTPS configurable: ignora certificados auto-firmados si
+// PRTG_REJECT_UNAUTHORIZED=false (default para PRTG on-premise).
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: env.prtg.rejectUnauthorized,
+});
 
 /**
  * Construye los parámetros de autenticación para la API de PRTG.
@@ -104,18 +100,20 @@ async function prtgGet<T>(
     response = (await fetch(url, {
       agent:   httpsAgent,
       headers: { Accept: "application/json" },
-      signal:  controller.signal as any,
+      // node-fetch v2 no declara 'signal' en sus tipos pero lo soporta desde v2.4
+      signal:  controller.signal as unknown as AbortSignal,
     })) as unknown as Response;
-  } catch (err: any) {
+  } catch (err: unknown) {
     clearTimeout(timeoutId);
-    if (err?.name === 'AbortError') {
+    const error = err as { name?: string; message?: string; code?: string; cause?: { message?: string } };
+    if (error?.name === 'AbortError') {
       logger.error("PRTG request timeout (>15s)", { url: url.replace(/apitoken=[^&]+/, "apitoken=***") });
       throw new Error("PRTG timeout: la solicitud tardó más de 15 segundos");
     }
     logger.error("PRTG fetch error (network/TLS)", {
-      message: err?.message,
-      code:    err?.code,
-      cause:   err?.cause?.message,
+      message: error?.message,
+      code:    error?.code,
+      cause:   error?.cause?.message,
     });
     throw err;
   } finally {
@@ -140,32 +138,28 @@ async function prtgGet<T>(
   }
 }
 
-
-
 // ─── Métodos públicos del cliente ─────────────────────────────────────────────
 
 /**
  * Obtiene todos los sensores de un grupo raíz de PRTG.
- * El grupo se identifica por su nombre exacto (prtg_group del cliente).
+ * Los subgrupos a consultar se configuran con PRTG_SUBGROUPS.
  */
 export async function getSensorsByGroup(
   groupName: string,
 ): Promise<PrtgSensor[]> {
-  const subgroups = ["Windows Server", "Networking", "Servers", "Backups"];
+  const cacheKey = `prtg:group:${groupName}`;
+  const cached = getCached<PrtgSensor[]>(cacheKey, CACHE_TTL_MS);
+  if (cached) return cached;
+
   const results = await Promise.all(
-    subgroups.map((sub) =>
+    env.prtg.subgroups.map((sub) =>
       prtgGet<PrtgTableResponse>("/api/table.json", {
-        content: "sensors",
-        columns:
-          "objid,name,device,group,probe,status,status_raw,lastvalue,message,tags",
+        content:      "sensors",
+        columns:      "objid,name,device,group,probe,status,status_raw,lastvalue,message,tags",
         filter_group: sub,
-        count: "2500",
+        count:        "2500",
       })
-        .then((r) => {
-          return (r.sensors ?? []).filter(
-            (s) => (s as any).probe === groupName,
-          );
-        })
+        .then((r) => (r.sensors ?? []).filter((s) => s.probe === groupName))
         .catch(() => []),
     ),
   );
@@ -173,11 +167,12 @@ export async function getSensorsByGroup(
   const sensors = results.flat();
 
   logger.debug("PRTG sensors found", {
-    group: groupName,
-    count: sensors.length,
+    group:  groupName,
+    count:  sensors.length,
     sample: sensors.slice(0, 3).map((s) => ({ name: s.name, group: s.group })),
   });
 
+  setCache(cacheKey, sensors);
   return sensors;
 }
 
@@ -190,9 +185,7 @@ export async function getSensorDetail(
   try {
     const result = await prtgGet<PrtgSensorDetail>(
       "/api/getsensordetails.json",
-      {
-        id: sensorId.toString(),
-      },
+      { id: sensorId.toString() },
     );
     return result.sensordata ?? null;
   } catch {
@@ -202,31 +195,33 @@ export async function getSensorDetail(
 
 /**
  * Obtiene sensores filtrados por tipo de tag.
- * Permite detectar automáticamente qué dashboards están disponibles para un cliente.
  */
 export async function getSensorsByTag(
   groupName: string,
   tag: string,
 ): Promise<PrtgSensor[]> {
   const result = await prtgGet<PrtgTableResponse>("/api/table.json", {
-    content: "sensors",
-    columns: "objid,name,device,group,status,status_raw,lastvalue,message,tags",
+    content:      "sensors",
+    columns:      "objid,name,device,group,status,status_raw,lastvalue,message,tags",
     filter_group: groupName,
-    filter_tags: tag,
-    count: "2500",
+    filter_tags:  tag,
+    count:        "2500",
   });
 
   return result.sensors ?? [];
 }
 
+/**
+ * Obtiene los canales de un sensor (CPU, memoria, etc.) por su ID.
+ */
 export async function getSensorChannels(
   sensorId: number,
-): Promise<{ name: string; lastvalue: string; lastvalue_raw: number }[]> {
-  const result = await prtgGet<any>("/api/table.json", {
-    output: "json",
+): Promise<PrtgChannel[]> {
+  const result = await prtgGet<PrtgChannelResponse>("/api/table.json", {
+    output:  "json",
     content: "channels",
     columns: "name,lastvalue,lastvalue_raw",
-    id: String(sensorId),
+    id:      String(sensorId),
   });
   return result?.channels ?? [];
 }

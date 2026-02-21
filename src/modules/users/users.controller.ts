@@ -144,7 +144,7 @@ export async function revokeKiosk(req: Request, res: Response): Promise<void> {
     await audit({
       usuario_id: req.user!.sub,
       email:      req.user!.email,
-      accion:     AuditAction.USER_DEACTIVATED,
+      accion:     AuditAction.KIOSK_REVOKED,
       ip_origen:  ip,
       resultado:  AuditResult.OK,
     });
@@ -157,6 +157,7 @@ export async function revokeKiosk(req: Request, res: Response): Promise<void> {
 }
 
 export async function deleteUserHandler(req: Request, res: Response): Promise<void> {
+  const ip = getClientIp(req);
   try {
     const { id } = req.params;
     // No permitir auto-eliminación
@@ -164,9 +165,23 @@ export async function deleteUserHandler(req: Request, res: Response): Promise<vo
       sendError(res, 400, 'No podés eliminar tu propio usuario.');
       return;
     }
-    await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
+    const result = await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
+    if ((result.rowCount ?? 0) === 0) {
+      sendError(res, 404, 'Usuario no encontrado.');
+      return;
+    }
+
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      accion:     AuditAction.USER_DELETED,
+      ip_origen:  ip,
+      resultado:  AuditResult.OK,
+    });
+
     sendOk(res, { deleted: true });
   } catch (err) {
+    logger.error('Error al eliminar usuario', { error: err });
     sendServerError(res);
   }
 }

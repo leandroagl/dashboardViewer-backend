@@ -22,6 +22,7 @@ export const env = {
   port:        parseInt(optionalEnv('PORT', '3000'), 10),
   nodeEnv:     optionalEnv('NODE_ENV', 'development'),
   isDev:       optionalEnv('NODE_ENV', 'development') === 'development',
+  corsOrigin:  optionalEnv('CORS_ORIGIN', 'http://localhost:4200'),
 
   // Base de datos
   db: {
@@ -42,8 +43,14 @@ export const env = {
 
   // PRTG
   prtg: {
-    baseUrl:   requireEnv('PRTG_BASE_URL'),
-    apiToken:  requireEnv('PRTG_API_TOKEN'),
+    baseUrl:            requireEnv('PRTG_BASE_URL'),
+    apiToken:           requireEnv('PRTG_API_TOKEN'),
+    // false por defecto: PRTG on-premise típicamente usa certificados auto-firmados.
+    // Setear a true en producción si se instala un certificado válido.
+    rejectUnauthorized: optionalEnv('PRTG_REJECT_UNAUTHORIZED', 'false') === 'true',
+    // Subgrupos a consultar en PRTG. Separados por coma, sin espacios extra.
+    subgroups:          optionalEnv('PRTG_SUBGROUPS', 'Windows Server,Networking,Servers,Backups')
+                          .split(',').map(s => s.trim()).filter(Boolean),
   },
 
   // Cookies

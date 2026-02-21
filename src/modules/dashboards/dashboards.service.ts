@@ -1,27 +1,16 @@
 // ─── Servicio de Dashboards ───────────────────────────────────────────────────
 import {
   PrtgSensor,
+  PrtgChannel,
   getSensorsByGroup,
   getSensorChannels,
 } from "../prtg/prtg.client";
 import { logger } from "../../utils/logger";
+import { getCached, setCache } from "../../utils/cache";
 
 export type DashboardType = "servers" | "backups" | "networking" | "windows";
 
-// ─── Cache en memoria ─────────────────────────────────────────────────────────
-const cache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL_MS = 55_000;
-
-function getCached<T>(key: string): T | null {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) { cache.delete(key); return null; }
-  return entry.data as T;
-}
-
-function setCache(key: string, data: any): void {
-  cache.set(key, { data, timestamp: Date.now() });
-}
 
 // ─── Mapeo grupo PRTG → dashboard ────────────────────────────────────────────
 const GROUP_MAP: { pattern: RegExp; type: DashboardType }[] = [
@@ -42,7 +31,7 @@ function groupNameToDashboard(groupName: string): DashboardType | null {
 // ─── Detección automática de dashboards disponibles ──────────────────────────
 export async function getAvailableDashboards(prtgGroup: string): Promise<DashboardType[]> {
   const cacheKey = `available:${prtgGroup}`;
-  const cached = getCached<DashboardType[]>(cacheKey);
+  const cached = getCached<DashboardType[]>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
   const sensors = await getSensorsByGroup(prtgGroup);
@@ -112,7 +101,7 @@ export interface VmwareDashboard {
 
 export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashboard> {
   const cacheKey = `vmware:${prtgGroup}`;
-  const cached = getCached<VmwareDashboard>(cacheKey);
+  const cached = getCached<VmwareDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('VMware dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);
@@ -133,19 +122,29 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
   const parseLastValue = (val: string): number =>
     parseFloat(val.replace(",", ".").replace(/[^0-9.]/g, "")) || 0;
 
-  const hosts: VmwareHost[] = [];
+  const deviceEntries = [...deviceMap.entries()];
 
-  for (const [device, deviceSensors] of deviceMap) {
+  // Obtener canales de todos los hosts en paralelo (evita N+1 calls secuenciales)
+  const channelResults = await Promise.all(
+    deviceEntries.map(([, deviceSensors]) => {
+      const hostPerfSensor = deviceSensors.find((s) => /^host\s*performance$/i.test(s.name.trim()));
+      return hostPerfSensor
+        ? getSensorChannels(hostPerfSensor.objid).catch(() => null)
+        : Promise.resolve(null);
+    })
+  );
+
+  const hosts: VmwareHost[] = deviceEntries.map(([device, deviceSensors], i) => {
     const uptimeSensor     = deviceSensors.find((s) => /^uptime$/i.test(s.name.trim()));
     const datastoreSensors = deviceSensors.filter((s) => /datastore\s*free/i.test(s.name));
     const hostPerfSensor   = deviceSensors.find((s) => /^host\s*performance$/i.test(s.name.trim()));
+    const channels         = channelResults[i];
 
     let cpuPct = 0, cpuValue = 'N/A', cpuStatus: SensorStatus = 'unknown';
     let memPct = 0, memValue = 'N/A', memStatus: SensorStatus = 'unknown';
 
     if (hostPerfSensor) {
-      try {
-        const channels = await getSensorChannels(hostPerfSensor.objid);
+      if (channels) {
         const cpuCh = channels.find(c => /^cpu usage$/i.test(c.name));
         const memCh = channels.find(c => /^memory consumed/i.test(c.name));
 
@@ -160,7 +159,8 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
           memStatus = memPct > 95 ? 'error' : memPct > 85 ? 'warning' : 'ok';
         }
         logger.debug('Host Performance channels', { device, cpuPct, memPct });
-      } catch (e) {
+      } else {
+        // Fallback: extraer desde el mensaje del sensor si el canal falló
         const msg    = (hostPerfSensor.message ?? '').replace(/<[^>]+>/g, '').trim();
         const cpuVal = parseLastValue(hostPerfSensor.lastvalue);
         if (cpuVal > 0) { cpuPct = cpuVal; cpuValue = hostPerfSensor.lastvalue; cpuStatus = normalizePrtgStatus(hostPerfSensor.status_raw); }
@@ -174,7 +174,9 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
       !/datastore|uptime|snapshot|traffic|switch|vmk|host\s*performance/i.test(s.name)
     );
 
-    const worstStatus = Math.max(...deviceSensors.map((s) => s.status_raw));
+    const worstStatus = deviceSensors.length > 0
+      ? Math.max(...deviceSensors.map((s) => s.status_raw))
+      : 3;
 
     const vms = vmSensors.map((s) => ({
       name:   s.name,
@@ -198,7 +200,7 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
       .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
       .map((s) => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-    hosts.push({
+    return {
       name:       device,
       status:     normalizePrtgStatus(worstStatus),
       uptime:     uptimeSensor?.lastvalue ?? "N/A",
@@ -207,8 +209,8 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
       vms,
       datastores,
       alerts:     hostAlerts,
-    });
-  }
+    };
+  });
 
   const allAlerts = sensors
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
@@ -243,7 +245,7 @@ export interface BackupsDashboard {
 
 export async function getBackupsDashboard(prtgGroup: string): Promise<BackupsDashboard> {
   const cacheKey = `backups:${prtgGroup}`;
-  const cached = getCached<BackupsDashboard>(cacheKey);
+  const cached = getCached<BackupsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('Backups dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);
@@ -309,7 +311,7 @@ export interface NetworkingDashboard {
 
 export async function getNetworkingDashboard(prtgGroup: string): Promise<NetworkingDashboard> {
   const cacheKey = `networking:${prtgGroup}`;
-  const cached = getCached<NetworkingDashboard>(cacheKey);
+  const cached = getCached<NetworkingDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('Networking dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);
@@ -333,8 +335,9 @@ export async function getNetworkingDashboard(prtgGroup: string): Promise<Network
       value:  sensor.lastvalue,
       status: normalizePrtgStatus(sensor.status_raw),
     });
-    if (sensor.status_raw === 5) device.status = "error";
-    else if (sensor.status_raw === 4 && device.status !== "error") device.status = "warning";
+    const sensorStatus = normalizePrtgStatus(sensor.status_raw);
+    if (sensorStatus === "error") device.status = "error";
+    else if (sensorStatus === "warning" && device.status !== "error") device.status = "warning";
   }
 
   const alerts = sensors
@@ -363,7 +366,7 @@ export interface WindowsDashboard {
 
 export async function getWindowsDashboard(prtgGroup: string): Promise<WindowsDashboard> {
   const cacheKey = `windows:${prtgGroup}`;
-  const cached = getCached<WindowsDashboard>(cacheKey);
+  const cached = getCached<WindowsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('Windows dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);

@@ -63,22 +63,42 @@ export async function createClient(input: CreateClientInput): Promise<Client> {
 export interface UpdateClientInput {
   nombre?:      string;
   prtg_group?:  string;
-  logo_url?:    string;
-  color_marca?: string;
+  logo_url?:    string | null; // null = eliminar logo
+  color_marca?: string | null; // null = eliminar color
 }
 
 /** Actualiza los campos editables de un cliente. El slug es inmutable. */
 export async function updateClient(id: string, input: UpdateClientInput): Promise<Client | null> {
+  const sets: string[]    = [];
+  const params: unknown[] = [];
+
+  if (input.nombre !== undefined) {
+    params.push(input.nombre);
+    sets.push(`nombre = $${params.length}`);
+  }
+  if (input.prtg_group !== undefined) {
+    params.push(input.prtg_group);
+    sets.push(`prtg_group = $${params.length}`);
+  }
+  // Usar 'in' para distinguir "campo omitido" de "campo seteado a null"
+  if ('logo_url' in input) {
+    params.push(input.logo_url ?? null);
+    sets.push(`logo_url = $${params.length}`);
+  }
+  if ('color_marca' in input) {
+    params.push(input.color_marca ?? null);
+    sets.push(`color_marca = $${params.length}`);
+  }
+
+  if (sets.length === 0) return getClientById(id);
+
+  params.push(id);
   const result = await pool.query(
     `UPDATE clientes
-     SET
-       nombre      = COALESCE($1, nombre),
-       prtg_group  = COALESCE($2, prtg_group),
-       logo_url    = COALESCE($3, logo_url),
-       color_marca = COALESCE($4, color_marca)
-     WHERE id = $5
+     SET ${sets.join(', ')}
+     WHERE id = $${params.length}
      RETURNING *`,
-    [input.nombre, input.prtg_group, input.logo_url, input.color_marca, id]
+    params
   );
   return result.rows[0] ?? null;
 }
