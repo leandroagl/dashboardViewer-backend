@@ -19,10 +19,13 @@ export enum AuditAction {
   DASHBOARD_VIEW     = 'dashboard_view',
   USER_CREATED       = 'usuario_creado',
   USER_DEACTIVATED   = 'usuario_desactivado',
+  USER_DELETED       = 'usuario_eliminado',
+  CLIENT_DELETED     = 'cliente_eliminado',
+  KIOSK_REVOKED      = 'kiosk_revocado',
   PASSWORD_RESET     = 'password_reset',
   ACCESS_DENIED      = 'acceso_denegado',
   CONFIG_MODIFIED    = 'config_modificada',
-  LOGS_PURGE = 'logs_purge',
+  LOGS_PURGE         = 'logs_purge',
 }
 
 export enum AuditResult {

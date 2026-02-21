@@ -23,15 +23,20 @@ import dashboardsRoutes from './modules/dashboards/dashboards.routes';
 
 const app = express();
 
+// Necesario para que Express use la IP real del cliente cuando hay un reverse
+// proxy (nginx, traefik, etc.). Sin esto, el rate limiting afecta a todos
+// por igual usando la IP del proxy.
+app.set('trust proxy', 1);
+
 // ─── Seguridad ────────────────────────────────────────────────────────────────
 
 // Cabeceras de seguridad HTTP (XSS, MIME sniffing, etc.)
 app.use(helmet());
 
-// CORS: solo orígenes confiables en producción
+// CORS: origen configurable por env var (CORS_ORIGIN)
 app.use(cors({
-  origin:      'http://localhost:4200',  // URL exacta del frontend
-  credentials: true,                     // ← imprescindible para cookies
+  origin:      env.corsOrigin,
+  credentials: true,            // ← imprescindible para cookies
 }));
 
 // Rate limiting global — protección básica contra fuerza bruta y scraping

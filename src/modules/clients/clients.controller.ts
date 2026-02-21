@@ -130,6 +130,7 @@ export async function setStatus(req: Request, res: Response): Promise<void> {
 }
 
 export async function deleteClientHandler(req: Request, res: Response): Promise<void> {
+  const ip = getClientIp(req);
   try {
     const { id } = req.params;
     // Verificar que no tenga usuarios activos
@@ -141,9 +142,24 @@ export async function deleteClientHandler(req: Request, res: Response): Promise<
       sendError(res, 400, 'No se puede eliminar un cliente con usuarios activos.');
       return;
     }
-    await pool.query(`DELETE FROM clientes WHERE id = $1`, [id]);
+    const result = await pool.query(`DELETE FROM clientes WHERE id = $1`, [id]);
+    if ((result.rowCount ?? 0) === 0) {
+      sendError(res, 404, 'Cliente no encontrado.');
+      return;
+    }
+
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      cliente_id: id,
+      accion:     AuditAction.CLIENT_DELETED,
+      ip_origen:  ip,
+      resultado:  AuditResult.OK,
+    });
+
     sendOk(res, { deleted: true });
   } catch (err) {
+    logger.error('Error al eliminar cliente', { error: err });
     sendServerError(res);
   }
 }

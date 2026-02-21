@@ -133,19 +133,29 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
   const parseLastValue = (val: string): number =>
     parseFloat(val.replace(",", ".").replace(/[^0-9.]/g, "")) || 0;
 
-  const hosts: VmwareHost[] = [];
+  const deviceEntries = [...deviceMap.entries()];
 
-  for (const [device, deviceSensors] of deviceMap) {
+  // Obtener canales de todos los hosts en paralelo (evita N+1 calls secuenciales)
+  const channelResults = await Promise.all(
+    deviceEntries.map(([, deviceSensors]) => {
+      const hostPerfSensor = deviceSensors.find((s) => /^host\s*performance$/i.test(s.name.trim()));
+      return hostPerfSensor
+        ? getSensorChannels(hostPerfSensor.objid).catch(() => null)
+        : Promise.resolve(null);
+    })
+  );
+
+  const hosts: VmwareHost[] = deviceEntries.map(([device, deviceSensors], i) => {
     const uptimeSensor     = deviceSensors.find((s) => /^uptime$/i.test(s.name.trim()));
     const datastoreSensors = deviceSensors.filter((s) => /datastore\s*free/i.test(s.name));
     const hostPerfSensor   = deviceSensors.find((s) => /^host\s*performance$/i.test(s.name.trim()));
+    const channels         = channelResults[i];
 
     let cpuPct = 0, cpuValue = 'N/A', cpuStatus: SensorStatus = 'unknown';
     let memPct = 0, memValue = 'N/A', memStatus: SensorStatus = 'unknown';
 
     if (hostPerfSensor) {
-      try {
-        const channels = await getSensorChannels(hostPerfSensor.objid);
+      if (channels) {
         const cpuCh = channels.find(c => /^cpu usage$/i.test(c.name));
         const memCh = channels.find(c => /^memory consumed/i.test(c.name));
 
@@ -160,7 +170,8 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
           memStatus = memPct > 95 ? 'error' : memPct > 85 ? 'warning' : 'ok';
         }
         logger.debug('Host Performance channels', { device, cpuPct, memPct });
-      } catch (e) {
+      } else {
+        // Fallback: extraer desde el mensaje del sensor si el canal falló
         const msg    = (hostPerfSensor.message ?? '').replace(/<[^>]+>/g, '').trim();
         const cpuVal = parseLastValue(hostPerfSensor.lastvalue);
         if (cpuVal > 0) { cpuPct = cpuVal; cpuValue = hostPerfSensor.lastvalue; cpuStatus = normalizePrtgStatus(hostPerfSensor.status_raw); }
@@ -174,7 +185,9 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
       !/datastore|uptime|snapshot|traffic|switch|vmk|host\s*performance/i.test(s.name)
     );
 
-    const worstStatus = Math.max(...deviceSensors.map((s) => s.status_raw));
+    const worstStatus = deviceSensors.length > 0
+      ? Math.max(...deviceSensors.map((s) => s.status_raw))
+      : 3;
 
     const vms = vmSensors.map((s) => ({
       name:   s.name,
@@ -198,7 +211,7 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
       .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
       .map((s) => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-    hosts.push({
+    return {
       name:       device,
       status:     normalizePrtgStatus(worstStatus),
       uptime:     uptimeSensor?.lastvalue ?? "N/A",
@@ -207,8 +220,8 @@ export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashb
       vms,
       datastores,
       alerts:     hostAlerts,
-    });
-  }
+    };
+  });
 
   const allAlerts = sensors
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
@@ -333,8 +346,9 @@ export async function getNetworkingDashboard(prtgGroup: string): Promise<Network
       value:  sensor.lastvalue,
       status: normalizePrtgStatus(sensor.status_raw),
     });
-    if (sensor.status_raw === 5) device.status = "error";
-    else if (sensor.status_raw === 4 && device.status !== "error") device.status = "warning";
+    const sensorStatus = normalizePrtgStatus(sensor.status_raw);
+    if (sensorStatus === "error") device.status = "error";
+    else if (sensorStatus === "warning" && device.status !== "error") device.status = "warning";
   }
 
   const alerts = sensors

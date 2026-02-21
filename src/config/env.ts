@@ -22,6 +22,7 @@ export const env = {
   port:        parseInt(optionalEnv('PORT', '3000'), 10),
   nodeEnv:     optionalEnv('NODE_ENV', 'development'),
   isDev:       optionalEnv('NODE_ENV', 'development') === 'development',
+  corsOrigin:  optionalEnv('CORS_ORIGIN', 'http://localhost:4200'),
 
   // Base de datos
   db: {

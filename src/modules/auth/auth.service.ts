@@ -10,6 +10,20 @@ import { logger } from "../../utils/logger";
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 
+/** Convierte un string de duración JWT ("7d", "24h", "15m", "60s") a milisegundos. */
+function parseDurationMs(duration: string): number {
+  const match = duration.match(/^(\d+)([smhd])$/);
+  if (!match) return 7 * 24 * 60 * 60 * 1000; // fallback: 7 días
+  const value = parseInt(match[1], 10);
+  switch (match[2]) {
+    case 's': return value * 1_000;
+    case 'm': return value * 60 * 1_000;
+    case 'h': return value * 60 * 60 * 1_000;
+    case 'd': return value * 24 * 60 * 60 * 1_000;
+    default:  return 7 * 24 * 60 * 60 * 1_000;
+  }
+}
+
 function generateTokenPair(
   payload: JwtPayload,
   esKiosk: boolean,
@@ -29,9 +43,10 @@ function generateTokenPair(
     ...(refreshExpiresIn ? { expiresIn: refreshExpiresIn } : {}),
   });
 
+  // Derivar la fecha de expiración desde la misma env var que usa jwt.sign
   const refreshExpiry = esKiosk
     ? null
-    : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    : new Date(Date.now() + parseDurationMs(env.jwt.refreshExpiresIn));
 
   return { accessToken, refreshToken, refreshExpiry };
 }
@@ -78,7 +93,13 @@ export async function loginUser(
   );
 
   const user = result.rows[0];
-  if (!user) return null;
+
+  // Siempre ejecutar bcrypt aunque el usuario no exista, para evitar
+  // timing attacks que permitan enumerar usuarios registrados.
+  const dummyHash = '$2b$12$invalidhashusedtoblocktimingenumerationattacks';
+  const isValid = await bcrypt.compare(password, user?.password_hash ?? dummyHash);
+
+  if (!user || !isValid) return null;
 
   if (user.cliente_id) {
     const clientResult = await pool.query(
@@ -87,9 +108,6 @@ export async function loginUser(
     );
     if (!clientResult.rows[0]?.activo) return null;
   }
-
-  const isValid = await bcrypt.compare(password, user.password_hash);
-  if (!isValid) return null;
 
   const payload: JwtPayload = {
     sub:        user.id,
@@ -122,11 +140,8 @@ export async function loginUser(
 }
 
 // ─── Refresh token ────────────────────────────────────────────────────────────
-// Ventana de gracia: si el token fue rotado hace menos de 10 segundos,
-// devolvemos el nuevo token en lugar de rechazar. Esto resuelve el race
-// condition cuando el frontend hace múltiples requests concurrentes.
-
-const GRACE_PERIOD_MS = 10_000;
+// Rota el refresh token cuando le quedan menos de 24 horas de vida,
+// evitando sesiones que expiren en el medio del uso.
 
 export async function refreshAccessToken(refreshToken: string): Promise<{
   accessToken: string;

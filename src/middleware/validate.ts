@@ -12,7 +12,7 @@ export function validate(req: Request, res: Response, next: NextFunction): void 
     res.status(400).json({
       ok:     false,
       error:  'Datos inválidos.',
-      fields: errors.array().map(e => ({ field: e.type, message: e.msg })),
+      fields: errors.array().map(e => ({ field: 'path' in e ? e.path : e.type, message: e.msg })),
     });
     return;
   }
