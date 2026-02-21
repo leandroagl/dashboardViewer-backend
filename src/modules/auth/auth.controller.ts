@@ -45,9 +45,10 @@ function setRefreshCookie(
 function clearRefreshCookie(res: Response): void {
   res.clearCookie("refresh_token", {
     httpOnly: true,
-    secure: env.cookie.secure,
-    sameSite: "strict",
-    domain: env.cookie.domain,
+    secure:   env.cookie.secure,
+    sameSite: env.nodeEnv === "production" ? "strict" : "lax",
+    domain:   env.nodeEnv === "production" ? env.cookie.domain : undefined,
+    path:     "/",
   });
 }
 

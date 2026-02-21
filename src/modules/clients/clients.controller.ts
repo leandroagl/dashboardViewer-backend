@@ -70,8 +70,8 @@ export async function create(req: Request, res: Response): Promise<void> {
     });
 
     sendOk(res, client, undefined, 201);
-  } catch (err: any) {
-    if (err.code === '23505') {
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === '23505') {
       sendError(res, 409, 'Ya existe un cliente con ese slug.');
       return;
     }
