@@ -70,6 +70,12 @@ async function storeRefreshToken(
 
 // ─── Login ────────────────────────────────────────────────────────────────────
 
+// Hash dummy pre-computado al iniciar el módulo. Garantiza que bcrypt.compare()
+// siempre ejecute su trabajo completo (mismo costo que los hashes reales),
+// evitando diferencias de timing que permitan enumerar usuarios existentes.
+// Se computa sincrónicamente una sola vez en startup (~200ms con cost 12).
+const DUMMY_HASH = bcrypt.hashSync('__dummy_never_used__', 12);
+
 export interface LoginResult {
   accessToken: string;
   refreshToken: string;
@@ -96,8 +102,7 @@ export async function loginUser(
 
   // Siempre ejecutar bcrypt aunque el usuario no exista, para evitar
   // timing attacks que permitan enumerar usuarios registrados.
-  const dummyHash = '$2b$12$invalidhashusedtoblocktimingenumerationattacks';
-  const isValid = await bcrypt.compare(password, user?.password_hash ?? dummyHash);
+  const isValid = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH);
 
   if (!user || !isValid) return null;
 
@@ -150,7 +155,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
 } | null> {
   let payload: JwtPayload;
   try {
-    payload = jwt.verify(refreshToken, env.jwt.refreshSecret) as JwtPayload;
+    payload = jwt.verify(refreshToken, env.jwt.refreshSecret, { algorithms: ['HS256'] }) as JwtPayload;
   } catch {
     return null;
   }
@@ -190,20 +195,23 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   let newRefreshToken = refreshToken;
   let refreshExpiry: Date | null = record.expira_en ?? null;
 
+  let accessToken: string;
+
   if (shouldRotate) {
     logger.debug('Rotando refresh token (vence en menos de 24hs)', { sub: payload.sub, hoursLeft });
     const pair = generateTokenPair(cleanPayload as JwtPayload, payload.es_kiosk ?? false);
     newRefreshToken = pair.refreshToken;
     refreshExpiry   = pair.refreshExpiry;
+    accessToken     = pair.accessToken; // Reutilizar el access token del mismo par
 
     await pool.query(
       `UPDATE refresh_tokens SET revocado = TRUE, revocado_en = NOW() WHERE id = $1`,
       [record.id],
     );
     await storeRefreshToken(payload.sub, newRefreshToken, refreshExpiry);
+  } else {
+    ({ accessToken } = generateTokenPair(cleanPayload as JwtPayload, payload.es_kiosk ?? false));
   }
-
-  const { accessToken } = generateTokenPair(cleanPayload as JwtPayload, payload.es_kiosk ?? false);
 
   return { accessToken, newRefreshToken, refreshExpiry };
 }

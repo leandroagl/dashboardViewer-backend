@@ -47,9 +47,8 @@ export async function audit(entry: AuditEntry): Promise<void> {
  * Extrae la IP real del request, considerando proxies reversos.
  */
 export function getClientIp(req: import('express').Request): string {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.socket.remoteAddress ?? '0.0.0.0';
+  // req.ip es resuelto por Express considerando el nivel de trust proxy configurado
+  // (app.set('trust proxy', 1) en index.ts). Esto previene que un atacante
+  // falsifique su IP manipulando el header X-Forwarded-For directamente.
+  return req.ip ?? req.socket.remoteAddress ?? '0.0.0.0';
 }

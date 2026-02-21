@@ -11,6 +11,10 @@ import { pool } from '../../config/database/pool';
 
 // ─── Validadores ──────────────────────────────────────────────────────────────
 
+export const idParamValidator = [
+  param('id').isUUID().withMessage('ID inválido.'),
+];
+
 export const createClientValidators = [
   body('nombre').notEmpty().trim().withMessage('Nombre requerido.'),
   body('slug')
@@ -66,8 +70,8 @@ export async function create(req: Request, res: Response): Promise<void> {
     });
 
     sendOk(res, client, undefined, 201);
-  } catch (err: any) {
-    if (err.code === '23505') {
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === '23505') {
       sendError(res, 409, 'Ya existe un cliente con ese slug.');
       return;
     }

@@ -13,7 +13,8 @@ const PAGE_SIZE = 50;
 /** GET /admin/logs */
 export async function getLogs(req: Request, res: Response): Promise<void> {
   try {
-    const page  = Math.max(1, parseInt(req.query.page as string ?? '1', 10));
+    const rawPage = parseInt(req.query.page as string ?? '1', 10);
+    const page    = Number.isNaN(rawPage) ? 1 : Math.max(1, rawPage);
     const limit = PAGE_SIZE;
 
     const result = await LogsService.getLogs({
@@ -77,6 +78,13 @@ export async function exportCsv(req: Request, res: Response): Promise<void> {
 export async function purgeLogsHandler(req: Request, res: Response): Promise<void> {
   try {
     const { antes_de } = req.query;
+
+    // Validar que antes_de sea una fecha ISO válida antes de pasarla a PostgreSQL
+    if (antes_de !== undefined && Number.isNaN(Date.parse(antes_de as string))) {
+      sendError(res, 400, 'El parámetro antes_de debe ser una fecha ISO válida (ej: 2024-01-01T00:00:00Z).');
+      return;
+    }
+
     const deleted = await LogsService.purgeLogs(antes_de as string | undefined);
     await audit({
       usuario_id: req.user!.sub, email: req.user!.email, cliente_id: undefined,

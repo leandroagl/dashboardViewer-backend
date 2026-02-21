@@ -24,9 +24,14 @@ export function generateRandomPassword(): string {
   // Completar hasta 12 caracteres
   const rest = Array.from({ length: 9 }, () => all[crypto.randomInt(all.length)]);
 
-  // Mezclar el array para que los caracteres obligatorios no estén siempre al inicio
+  // Fisher-Yates shuffle — produce permutaciones uniformes, a diferencia de
+  // Array.sort() con comparador aleatorio que genera distribuciones sesgadas.
   const combined = [...mandatory, ...rest];
-  return combined.sort(() => crypto.randomInt(3) - 1).join('');
+  for (let i = combined.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(i + 1);
+    [combined[i], combined[j]] = [combined[j], combined[i]];
+  }
+  return combined.join('');
 }
 
 /**

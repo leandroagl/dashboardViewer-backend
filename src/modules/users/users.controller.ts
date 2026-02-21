@@ -1,7 +1,7 @@
 // ─── Controller de Usuarios ───────────────────────────────────────────────────
 
 import { Request, Response } from 'express';
-import { body, query } from 'express-validator';
+import { body, param, query } from 'express-validator';
 import { audit, getClientIp } from '../../middleware/auditLogger';
 import { AuditAction, AuditResult, UserRole } from '../../types';
 import { sendOk, sendError, sendServerError } from '../../utils/response';
@@ -10,6 +10,11 @@ import * as UsersService from './users.service';
 import { revokeKioskSession } from '../auth/auth.service';
 import { pool } from '../../config/database/pool';
 
+/** Valida que el parámetro :id sea un UUID válido */
+export const idParamValidator = [
+  param('id').isUUID().withMessage('ID inválido.'),
+];
+
 export const createUserValidators = [
   body('email').isEmail().withMessage('Email inválido.'),
   body('nombre').notEmpty().trim().withMessage('Nombre requerido.'),
@@ -17,12 +22,24 @@ export const createUserValidators = [
   body('cliente_id').optional().isUUID().withMessage('ID de cliente inválido.'),
 ];
 
+export const updateUserValidators = [
+  param('id').isUUID().withMessage('ID inválido.'),
+  body('nombre').optional().trim().notEmpty().withMessage('Nombre no puede ser vacío.')
+    .isLength({ max: 100 }).withMessage('Nombre demasiado largo (máx. 100 caracteres).'),
+  body('cliente_id').optional({ nullable: true }).isUUID().withMessage('ID de cliente inválido.'),
+];
+
 /** GET /admin/users */
 export async function getAll(req: Request, res: Response): Promise<void> {
   try {
+    const rolQuery = req.query.rol as string | undefined;
+    const rolFilter = rolQuery && Object.values(UserRole).includes(rolQuery as UserRole)
+      ? rolQuery
+      : undefined;
+
     const users = await UsersService.getAllUsers({
       clienteId: req.query.cliente_id as string | undefined,
-      rol:       req.query.rol as string | undefined,
+      rol:       rolFilter,
       activo:    req.query.activo !== undefined ? req.query.activo === 'true' : undefined,
     });
     sendOk(res, users);
@@ -61,8 +78,8 @@ export async function create(req: Request, res: Response): Promise<void> {
 
     // Devolver la contraseña en texto plano UNA SOLA VEZ
     sendOk(res, { ...user, plainPassword }, undefined, 201);
-  } catch (err: any) {
-    if (err.code === '23505') {
+  } catch (err: unknown) {
+    if ((err as { code?: string }).code === '23505') {
       sendError(res, 409, 'Ya existe un usuario con ese email.');
       return;
     }
@@ -90,6 +107,12 @@ export async function setStatus(req: Request, res: Response): Promise<void> {
 
   if (typeof activo !== 'boolean') {
     sendError(res, 400, 'El campo "activo" debe ser booleano.');
+    return;
+  }
+
+  // Prevenir auto-desactivación (un admin no puede bloquearse a sí mismo)
+  if (!activo && req.params.id === req.user!.sub) {
+    sendError(res, 400, 'No podés desactivar tu propio usuario.');
     return;
   }
 

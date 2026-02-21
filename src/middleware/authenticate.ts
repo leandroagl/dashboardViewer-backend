@@ -24,7 +24,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   const token = authHeader.split(' ')[1];
 
   try {
-    const payload = jwt.verify(token, env.jwt.accessSecret) as JwtPayload;
+    const payload = jwt.verify(token, env.jwt.accessSecret, { algorithms: ['HS256'] }) as JwtPayload;
     req.user = payload;
     next();
   } catch {
@@ -45,26 +45,31 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
 }
 
 /**
- * Middleware que verifica que el clientSlug de la URL corresponda
- * al cliente del usuario autenticado. Los admin_ondra pueden acceder a cualquier slug.
+ * Middleware de pre-filtrado para rutas de dashboard.
+ *
+ * ⚠️  ALCANCE LIMITADO: Este middleware NO verifica que el :clientSlug de la URL
+ * corresponda al cliente del usuario. Solo garantiza que:
+ *   1. El usuario está autenticado (hecho antes por `authenticate`).
+ *   2. Los viewers tienen un cliente_id asignado en su JWT.
+ *
+ * La validación completa slug → cliente → acceso del usuario se realiza en
+ * resolveClientAccess() dentro de cada controller de dashboards.
+ * Toda nueva ruta bajo /:clientSlug/dashboards DEBE llamar resolveClientAccess().
  */
 export function requireClientAccess(req: Request, res: Response, next: NextFunction): void {
-  const { clientSlug } = req.params;
-
-  // Admin puede ver cualquier cliente
+  // Admin puede acceder a cualquier cliente — la validación de slug no aplica.
   if (req.user?.rol === UserRole.ADMIN_ONDRA) {
     next();
     return;
   }
 
-  // Viewer debe coincidir con su propio slug (viene resuelto por el backend al hacer login)
-  // El slug del cliente está almacenado en el claim cliente_id del JWT —
-  // esta validación se hace contra la tabla de clientes en el servicio correspondiente.
-  // Aquí simplemente garantizamos que haya un cliente_id en el token.
+  // Viewers sin cliente asignado no pueden acceder a ningún dashboard.
   if (!req.user?.cliente_id) {
     sendError(res, 403, 'No tenés un cliente asignado.');
     return;
   }
 
+  // La verificación de que este cliente_id corresponde al :clientSlug de la URL
+  // se delega a resolveClientAccess() en el controller correspondiente.
   next();
 }
