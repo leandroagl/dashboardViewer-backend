@@ -142,7 +142,9 @@ export async function setUserActive(id: string, activo: boolean): Promise<boolea
   return (result.rowCount ?? 0) > 0;
 }
 
-/** Resetea la contraseña del usuario y activa el flag de cambio obligatorio */
+/** Resetea la contraseña del usuario y activa el flag de cambio obligatorio.
+ *  Usa una transacción para garantizar que la actualización de contraseña
+ *  y la revocación de tokens sean atómicas. */
 export async function resetPassword(id: string): Promise<string | null> {
   const user = await getUserById(id);
   if (!user) return null;
@@ -150,18 +152,29 @@ export async function resetPassword(id: string): Promise<string | null> {
   const plainPassword = generateRandomPassword();
   const passwordHash  = await bcrypt.hash(plainPassword, 12);
 
-  await pool.query(
-    `UPDATE usuarios
-     SET password_hash = $1, debe_cambiar_password = TRUE
-     WHERE id = $2`,
-    [passwordHash, id]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  // Revocar todos los tokens activos del usuario
-  await pool.query(
-    `UPDATE refresh_tokens SET revocado = TRUE WHERE usuario_id = $1`,
-    [id]
-  );
+    await client.query(
+      `UPDATE usuarios
+       SET password_hash = $1, debe_cambiar_password = TRUE
+       WHERE id = $2`,
+      [passwordHash, id]
+    );
+
+    await client.query(
+      `UPDATE refresh_tokens SET revocado = TRUE WHERE usuario_id = $1`,
+      [id]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return plainPassword;
 }

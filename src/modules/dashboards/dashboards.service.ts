@@ -1,27 +1,16 @@
 // ─── Servicio de Dashboards ───────────────────────────────────────────────────
 import {
   PrtgSensor,
+  PrtgChannel,
   getSensorsByGroup,
   getSensorChannels,
 } from "../prtg/prtg.client";
 import { logger } from "../../utils/logger";
+import { getCached, setCache } from "../../utils/cache";
 
 export type DashboardType = "servers" | "backups" | "networking" | "windows";
 
-// ─── Cache en memoria ─────────────────────────────────────────────────────────
-const cache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_TTL_MS = 55_000;
-
-function getCached<T>(key: string): T | null {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) { cache.delete(key); return null; }
-  return entry.data as T;
-}
-
-function setCache(key: string, data: any): void {
-  cache.set(key, { data, timestamp: Date.now() });
-}
 
 // ─── Mapeo grupo PRTG → dashboard ────────────────────────────────────────────
 const GROUP_MAP: { pattern: RegExp; type: DashboardType }[] = [
@@ -42,7 +31,7 @@ function groupNameToDashboard(groupName: string): DashboardType | null {
 // ─── Detección automática de dashboards disponibles ──────────────────────────
 export async function getAvailableDashboards(prtgGroup: string): Promise<DashboardType[]> {
   const cacheKey = `available:${prtgGroup}`;
-  const cached = getCached<DashboardType[]>(cacheKey);
+  const cached = getCached<DashboardType[]>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
   const sensors = await getSensorsByGroup(prtgGroup);
@@ -112,7 +101,7 @@ export interface VmwareDashboard {
 
 export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashboard> {
   const cacheKey = `vmware:${prtgGroup}`;
-  const cached = getCached<VmwareDashboard>(cacheKey);
+  const cached = getCached<VmwareDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('VMware dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);
@@ -256,7 +245,7 @@ export interface BackupsDashboard {
 
 export async function getBackupsDashboard(prtgGroup: string): Promise<BackupsDashboard> {
   const cacheKey = `backups:${prtgGroup}`;
-  const cached = getCached<BackupsDashboard>(cacheKey);
+  const cached = getCached<BackupsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('Backups dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);
@@ -322,7 +311,7 @@ export interface NetworkingDashboard {
 
 export async function getNetworkingDashboard(prtgGroup: string): Promise<NetworkingDashboard> {
   const cacheKey = `networking:${prtgGroup}`;
-  const cached = getCached<NetworkingDashboard>(cacheKey);
+  const cached = getCached<NetworkingDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('Networking dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);
@@ -377,7 +366,7 @@ export interface WindowsDashboard {
 
 export async function getWindowsDashboard(prtgGroup: string): Promise<WindowsDashboard> {
   const cacheKey = `windows:${prtgGroup}`;
-  const cached = getCached<WindowsDashboard>(cacheKey);
+  const cached = getCached<WindowsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) { logger.debug('Windows dashboard (cache hit)', { prtgGroup }); return cached; }
 
   const all     = await getSensorsByGroup(prtgGroup);
