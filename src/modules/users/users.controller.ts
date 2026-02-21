@@ -1,7 +1,7 @@
 // ─── Controller de Usuarios ───────────────────────────────────────────────────
 
 import { Request, Response } from 'express';
-import { body, query } from 'express-validator';
+import { body, param, query } from 'express-validator';
 import { audit, getClientIp } from '../../middleware/auditLogger';
 import { AuditAction, AuditResult, UserRole } from '../../types';
 import { sendOk, sendError, sendServerError } from '../../utils/response';
@@ -10,11 +10,23 @@ import * as UsersService from './users.service';
 import { revokeKioskSession } from '../auth/auth.service';
 import { pool } from '../../config/database/pool';
 
+/** Valida que el parámetro :id sea un UUID válido */
+export const idParamValidator = [
+  param('id').isUUID().withMessage('ID inválido.'),
+];
+
 export const createUserValidators = [
   body('email').isEmail().withMessage('Email inválido.'),
   body('nombre').notEmpty().trim().withMessage('Nombre requerido.'),
   body('rol').isIn(Object.values(UserRole)).withMessage('Rol inválido.'),
   body('cliente_id').optional().isUUID().withMessage('ID de cliente inválido.'),
+];
+
+export const updateUserValidators = [
+  param('id').isUUID().withMessage('ID inválido.'),
+  body('nombre').optional().trim().notEmpty().withMessage('Nombre no puede ser vacío.')
+    .isLength({ max: 100 }).withMessage('Nombre demasiado largo (máx. 100 caracteres).'),
+  body('cliente_id').optional({ nullable: true }).isUUID().withMessage('ID de cliente inválido.'),
 ];
 
 /** GET /admin/users */

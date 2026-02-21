@@ -11,6 +11,10 @@ import { pool } from '../../config/database/pool';
 
 // ─── Validadores ──────────────────────────────────────────────────────────────
 
+export const idParamValidator = [
+  param('id').isUUID().withMessage('ID inválido.'),
+];
+
 export const createClientValidators = [
   body('nombre').notEmpty().trim().withMessage('Nombre requerido.'),
   body('slug')

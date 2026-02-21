@@ -10,12 +10,12 @@ const router = Router();
 // Todas las rutas requieren autenticación y rol admin_ondra
 router.use(authenticate, requireAdmin);
 
-router.get('/',           ClientsController.getAll);
-router.get('/:id',        ClientsController.getOne);
-router.post('/',          ClientsController.createClientValidators, validate, ClientsController.create);
-router.patch('/:id',      ClientsController.updateClientValidators, validate, ClientsController.update);
-router.patch('/:id/status', ClientsController.setStatus);
-router.delete('/:id', ClientsController.deleteClientHandler);
+router.get('/',               ClientsController.getAll);
+router.get('/:id',            ClientsController.idParamValidator, validate, ClientsController.getOne);
+router.post('/',              ClientsController.createClientValidators, validate, ClientsController.create);
+router.patch('/:id',          ClientsController.updateClientValidators, validate, ClientsController.update);
+router.patch('/:id/status',   ClientsController.idParamValidator, validate, ClientsController.setStatus);
+router.delete('/:id',         ClientsController.idParamValidator, validate, ClientsController.deleteClientHandler);
 
 
 export default router;

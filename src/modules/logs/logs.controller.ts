@@ -13,7 +13,8 @@ const PAGE_SIZE = 50;
 /** GET /admin/logs */
 export async function getLogs(req: Request, res: Response): Promise<void> {
   try {
-    const page  = Math.max(1, parseInt(req.query.page as string ?? '1', 10));
+    const rawPage = parseInt(req.query.page as string ?? '1', 10);
+    const page    = Number.isNaN(rawPage) ? 1 : Math.max(1, rawPage);
     const limit = PAGE_SIZE;
 
     const result = await LogsService.getLogs({

@@ -150,7 +150,14 @@ export async function exportLogsCsv(filters: Omit<LogFilters, 'page' | 'limit'>)
   const rows = result.rows.map(r =>
     [r.timestamp, r.accion, r.resultado, r.email ?? '', r.usuario_nombre ?? '',
      r.cliente_nombre ?? '', r.dashboard ?? '', r.ip_origen]
-    .map(v => `"${String(v).replace(/"/g, '""')}"`)
+    .map(v => {
+      const s = String(v);
+      // Prevenir CSV injection: Excel/LibreOffice interpretan celdas que
+      // comienzan con =, +, -, @ como fórmulas. Anteponemos una comilla simple
+      // para que el valor sea tratado como texto literal.
+      const safe = /^[=+\-@]/.test(s) ? `'${s}` : s;
+      return `"${safe.replace(/"/g, '""')}"`;
+    })
     .join(',')
   );
 
