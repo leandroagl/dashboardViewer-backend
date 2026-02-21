@@ -24,7 +24,7 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
   const token = authHeader.split(' ')[1];
 
   try {
-    const payload = jwt.verify(token, env.jwt.accessSecret) as JwtPayload;
+    const payload = jwt.verify(token, env.jwt.accessSecret, { algorithms: ['HS256'] }) as JwtPayload;
     req.user = payload;
     next();
   } catch {
