@@ -274,12 +274,14 @@ export async function getBackupsDashboard(prtgGroup: string): Promise<BackupsDas
     const type: BackupDevice['type'] = /qnap/i.test(deviceName) ? 'qnap'
       : /veeam/i.test(deviceName) ? 'veeam' : 'other';
 
-    const jobs: BackupJob[] = deviceSensors.map(s => ({
-      name:        s.name,
-      lastStatus:  normalizePrtgStatus(s.status_raw),
-      lastMessage: s.message,
-      lastValue:   s.lastvalue,
-    }));
+    const jobs: BackupJob[] = deviceSensors
+      .filter(s => !/^veeam backup job status$/i.test(s.name.trim()))
+      .map(s => ({
+        name:        s.name,
+        lastStatus:  normalizePrtgStatus(s.status_raw),
+        lastMessage: s.message,
+        lastValue:   s.lastvalue,
+      }));
 
     const worstRaw = Math.max(...deviceSensors.map(s => s.status_raw));
     const alerts   = jobs
