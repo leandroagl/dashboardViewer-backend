@@ -118,10 +118,15 @@ async function prtgGet<T>(
   }
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    logger.error("PRTG HTTP error", {
-      status: response.status,
-      body:   body.slice(0, 300),
+    const body      = await response.text().catch(() => "");
+    const maskedUrl = url.replace(/apitoken=[^&]+/, "apitoken=***");
+    // 4xx: errores de cliente (permisos, throttling, IIS auth) — recuperables, warn.
+    // 5xx: errores de servidor — críticos, error.
+    const logFn = response.status < 500 ? logger.warn : logger.error;
+    logFn("PRTG HTTP error", {
+      status:   response.status,
+      endpoint: maskedUrl,
+      body:     body.slice(0, 300),
     });
     throw new Error(`PRTG HTTP ${response.status}: ${body.slice(0, 200)}`);
   }
@@ -142,9 +147,11 @@ async function prtgGet<T>(
  * Los subgrupos a consultar se configuran con PRTG_SUBGROUPS.
  */
 export async function getSensorsByGroup(
-  groupName: string,
+  groupName:   string,
+  extraProbes: string[] = [],
 ): Promise<PrtgSensor[]> {
-  const cacheKey = `prtg:group:${groupName}`;
+  const allProbes = [groupName, ...extraProbes];
+  const cacheKey  = `prtg:group:${allProbes.slice().sort().join(",")}`;
   const cached = getCached<PrtgSensor[]>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -156,7 +163,7 @@ export async function getSensorsByGroup(
         filter_group: sub,
         count:        "2500",
       })
-        .then((r) => (r.sensors ?? []).filter((s) => s.probe === groupName))
+        .then((r) => (r.sensors ?? []).filter((s) => allProbes.includes(s.probe)))
         .catch(() => []),
     ),
   );
@@ -208,11 +215,16 @@ export async function getSensorsByTag(
 export async function getSensorChannels(
   sensorId: number,
 ): Promise<PrtgChannel[]> {
-  const result = await prtgGet<PrtgChannelResponse>("/api/table.json", {
-    output:  "json",
-    content: "channels",
-    columns: "name,lastvalue,lastvalue_raw",
-    id:      String(sensorId),
-  });
-  return result?.channels ?? [];
+  try {
+    const result = await prtgGet<PrtgChannelResponse>("/api/table.json", {
+      output:  "json",
+      content: "channels",
+      columns: "name,lastvalue,lastvalue_raw",
+      id:      String(sensorId),
+    });
+    return result?.channels ?? [];
+  } catch (err) {
+    logger.warn("getSensorChannels failed, using fallback", { sensorId });
+    throw err;
+  }
 }

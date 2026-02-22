@@ -29,12 +29,12 @@ function groupNameToDashboard(groupName: string): DashboardType | null {
 }
 
 // ─── Detección automática de dashboards disponibles ──────────────────────────
-export async function getAvailableDashboards(prtgGroup: string): Promise<DashboardType[]> {
+export async function getAvailableDashboards(prtgGroup: string, extraProbes: string[] = []): Promise<DashboardType[]> {
   const cacheKey = `available:${prtgGroup}`;
   const cached = getCached<DashboardType[]>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
-  const sensors = await getSensorsByGroup(prtgGroup);
+  const sensors = await getSensorsByGroup(prtgGroup, extraProbes);
   const subgroups = [...new Set(sensors.map((s) => s.group).filter(Boolean))];
 
   const available: DashboardType[] = [];
@@ -99,12 +99,12 @@ export interface VmwareDashboard {
   alerts: { name: string; message: string; status: SensorStatus }[];
 }
 
-export async function getVmwareDashboard(prtgGroup: string): Promise<VmwareDashboard> {
+export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<VmwareDashboard> {
   const cacheKey = `vmware:${prtgGroup}`;
   const cached = getCached<VmwareDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
-  const all     = await getSensorsByGroup(prtgGroup);
+  const all     = await getSensorsByGroup(prtgGroup, extraProbes);
   const sensors = filterBySubgroup(all, "servers");
 
   const deviceMap = new Map<string, PrtgSensor[]>();
@@ -240,7 +240,7 @@ export interface BackupJob {
 
 export interface BackupDevice {
   name:    string;
-  type:    'veeam' | 'qnap' | 'other';
+  type:    'veeam' | 'acronis' | 'qnap' | 'other';
   status:  SensorStatus;
   jobs:    BackupJob[];
   alerts:  { name: string; message: string }[];
@@ -252,12 +252,12 @@ export interface BackupsDashboard {
   alerts:        { name: string; message: string }[];
 }
 
-export async function getBackupsDashboard(prtgGroup: string): Promise<BackupsDashboard> {
+export async function getBackupsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<BackupsDashboard> {
   const cacheKey = `backups:${prtgGroup}`;
   const cached = getCached<BackupsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
-  const all     = await getSensorsByGroup(prtgGroup);
+  const all     = await getSensorsByGroup(prtgGroup, extraProbes);
   const sensors = filterBySubgroup(all, "backups");
 
   // Agrupar sensores por dispositivo
@@ -271,8 +271,10 @@ export async function getBackupsDashboard(prtgGroup: string): Promise<BackupsDas
   const devices: BackupDevice[] = [];
 
   for (const [deviceName, deviceSensors] of deviceMap) {
-    const type: BackupDevice['type'] = /qnap/i.test(deviceName) ? 'qnap'
-      : /veeam/i.test(deviceName) ? 'veeam' : 'other';
+    const type: BackupDevice['type'] = /qnap/i.test(deviceName)    ? 'qnap'
+      : /veeam/i.test(deviceName)    ? 'veeam'
+      : /acronis/i.test(deviceName)  ? 'acronis'
+      : 'other';
 
     const jobs: BackupJob[] = deviceSensors
       .filter(s => !/^veeam backup job status$/i.test(s.name.trim()))
@@ -338,12 +340,12 @@ function buildNetworkDevices(sensors: PrtgSensor[]): NetworkDevice[] {
   return [...map.values()];
 }
 
-export async function getNetworkingDashboard(prtgGroup: string): Promise<NetworkingDashboard> {
+export async function getNetworkingDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<NetworkingDashboard> {
   const cacheKey = `networking:${prtgGroup}`;
   const cached = getCached<NetworkingDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
-  const all            = await getSensorsByGroup(prtgGroup);
+  const all            = await getSensorsByGroup(prtgGroup, extraProbes);
   const netSensors     = filterBySubgroup(all, "networking");
   const switchSensors  = filterByLeafGroup(all, /^switches?$/i);
   const ptpSensors     = filterByLeafGroup(all, /^antenas?\s*ptp$/i);
@@ -378,12 +380,12 @@ export interface WindowsDashboard {
   alerts:  { name: string; message: string; status: SensorStatus }[];
 }
 
-export async function getWindowsDashboard(prtgGroup: string): Promise<WindowsDashboard> {
+export async function getWindowsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<WindowsDashboard> {
   const cacheKey = `windows:${prtgGroup}`;
   const cached = getCached<WindowsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
-  const all     = await getSensorsByGroup(prtgGroup);
+  const all     = await getSensorsByGroup(prtgGroup, extraProbes);
   const sensors = filterBySubgroup(all, "windows");
 
   const serverMap = new Map<string, {
