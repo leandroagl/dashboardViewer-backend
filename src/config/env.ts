@@ -49,7 +49,7 @@ export const env = {
     // Setear a true en producción si se instala un certificado válido.
     rejectUnauthorized: optionalEnv('PRTG_REJECT_UNAUTHORIZED', 'false') === 'true',
     // Subgrupos a consultar en PRTG. Separados por coma, sin espacios extra.
-    subgroups:          optionalEnv('PRTG_SUBGROUPS', 'Windows Server,Networking,Servers,Backups')
+    subgroups:          optionalEnv('PRTG_SUBGROUPS', 'Windows Server,Networking,Servers,Backups,Switches,Antenas PTP')
                           .split(',').map(s => s.trim()).filter(Boolean),
   },
 
