@@ -311,8 +311,31 @@ export interface NetworkDevice {
 }
 
 export interface NetworkingDashboard {
-  devices: NetworkDevice[];
-  alerts:  { name: string; message: string; status: SensorStatus }[];
+  devices:     NetworkDevice[];
+  switches:    NetworkDevice[];
+  ptpAntennas: NetworkDevice[];
+  alerts:      { name: string; message: string; status: SensorStatus }[];
+}
+
+function filterByLeafGroup(sensors: PrtgSensor[], leafPattern: RegExp): PrtgSensor[] {
+  return sensors.filter((s) => {
+    const parts = (s.group || "").split(">").map((p) => p.trim());
+    return leafPattern.test(parts[parts.length - 1]);
+  });
+}
+
+function buildNetworkDevices(sensors: PrtgSensor[]): NetworkDevice[] {
+  const map = new Map<string, NetworkDevice>();
+  for (const s of sensors) {
+    const key = s.device || s.name;
+    if (!map.has(key)) map.set(key, { name: key, status: "ok", sensors: [] });
+    const dev = map.get(key)!;
+    dev.sensors.push({ name: s.name, value: s.lastvalue, status: normalizePrtgStatus(s.status_raw) });
+    const st = normalizePrtgStatus(s.status_raw);
+    if (st === "error") dev.status = "error";
+    else if (st === "warning" && dev.status !== "error") dev.status = "warning";
+  }
+  return [...map.values()];
 }
 
 export async function getNetworkingDashboard(prtgGroup: string): Promise<NetworkingDashboard> {
@@ -320,32 +343,22 @@ export async function getNetworkingDashboard(prtgGroup: string): Promise<Network
   const cached = getCached<NetworkingDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
-  const all     = await getSensorsByGroup(prtgGroup);
-  const sensors = filterBySubgroup(all, "networking");
+  const all            = await getSensorsByGroup(prtgGroup);
+  const netSensors     = filterBySubgroup(all, "networking");
+  const switchSensors  = filterByLeafGroup(all, /^switches?$/i);
+  const ptpSensors     = filterByLeafGroup(all, /^antenas?\s*ptp$/i);
 
-  const deviceMap = new Map<string, NetworkDevice>();
-
-  for (const sensor of sensors) {
-    const deviceName = sensor.device || sensor.name;
-    if (!deviceMap.has(deviceName)) {
-      deviceMap.set(deviceName, { name: deviceName, status: "ok", sensors: [] });
-    }
-    const device = deviceMap.get(deviceName)!;
-    device.sensors.push({
-      name:   sensor.name,
-      value:  sensor.lastvalue,
-      status: normalizePrtgStatus(sensor.status_raw),
-    });
-    const sensorStatus = normalizePrtgStatus(sensor.status_raw);
-    if (sensorStatus === "error") device.status = "error";
-    else if (sensorStatus === "warning" && device.status !== "error") device.status = "warning";
-  }
-
-  const alerts = sensors
+  const allNetSensors  = [...netSensors, ...switchSensors, ...ptpSensors];
+  const alerts = allNetSensors
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
     .map((s) => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-  const result: NetworkingDashboard = { devices: [...deviceMap.values()], alerts };
+  const result: NetworkingDashboard = {
+    devices:     buildNetworkDevices(netSensors),
+    switches:    buildNetworkDevices(switchSensors),
+    ptpAntennas: buildNetworkDevices(ptpSensors),
+    alerts,
+  };
   setCache(cacheKey, result);
   return result;
 }
