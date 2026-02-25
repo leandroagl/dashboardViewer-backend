@@ -52,7 +52,7 @@ export const env = {
     // Subgrupos a consultar en PRTG. Separados por coma, sin espacios extra.
     subgroups: optionalEnv(
       "PRTG_SUBGROUPS",
-      "Windows Server,Networking,Servers,Backups,Switches,Antenas PTP",
+      "Windows Server,Networking,Servers,Backups,Switches,Antenas PTP,Sucursales",
     )
       .split(",")
       .map((s) => s.trim())
