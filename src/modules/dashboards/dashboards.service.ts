@@ -523,12 +523,9 @@ export async function getSucursalesDashboard(prtgGroup: string, extraProbes: str
     const latency    = (status === 'ok' || status === 'warning') && pingSensor?.lastvalue
       ? pingSensor.lastvalue
       : null;
-    return {
-      name,
-      status,
-      latency,
-      message: pingSensor?.message ?? '',
-    };
+    const rawMessage = pingSensor?.message ?? '';
+    const message    = rawMessage.replace(/<[^>]+>/g, '').trim();
+    return { name, status, latency, message };
   });
 
   // Ordenar: offline/error primero
