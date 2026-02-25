@@ -81,51 +81,12 @@ function normalizePrtgStatus(statusRaw: number): SensorStatus {
   }
 }
 
-// ─── Parser de tamaño de disco desde texto PRTG ──────────────────────────────
-function parseDiskSizeInfo(text: string): { freeGb: number | null; totalGb: number | null } {
-  if (!text) return { freeGb: null, totalGb: null };
-  const clean = text.replace(/<[^>]+>/g, '').trim();
-
-  const toGb = (val: number, unit: string): number => {
-    const u = unit.toLowerCase();
-    if (u.startsWith('t')) return val * 1024;
-    if (u.startsWith('g')) return val;
-    if (u.startsWith('m')) return val / 1024;
-    if (u.startsWith('k')) return val / (1024 * 1024);
-    return val;
-  };
-
-  const NUM  = '(\\d+(?:[.,]\\d+)?)';
-  const UNIT = '(TByte|GByte|MByte|KByte|TB|GB|MB|KB)';
-
-  // "X unit free of Y unit"
-  const m1 = clean.match(new RegExp(`${NUM}\\s*${UNIT}\\s+free\\s+of\\s+${NUM}\\s*${UNIT}`, 'i'));
-  if (m1) {
-    return {
-      freeGb:  Math.round(toGb(parseFloat(m1[1].replace(',', '.')), m1[2]) * 10) / 10,
-      totalGb: Math.round(toGb(parseFloat(m1[3].replace(',', '.')), m1[4]) * 10) / 10,
-    };
-  }
-
-  // "X unit free"
-  const m2 = clean.match(new RegExp(`${NUM}\\s*${UNIT}\\s+free`, 'i'));
-  if (m2) {
-    return {
-      freeGb:  Math.round(toGb(parseFloat(m2[1].replace(',', '.')), m2[2]) * 10) / 10,
-      totalGb: null,
-    };
-  }
-
-  // "free: X unit" or "free X unit"
-  const m3 = clean.match(new RegExp(`free[:\\s]+${NUM}\\s*${UNIT}`, 'i'));
-  if (m3) {
-    return {
-      freeGb:  Math.round(toGb(parseFloat(m3[1].replace(',', '.')), m3[2]) * 10) / 10,
-      totalGb: null,
-    };
-  }
-
-  return { freeGb: null, totalGb: null };
+// ─── Conversión de bytes crudos PRTG a GB ────────────────────────────────────
+// PRTG provee bytes como número en lastvalue_raw. El campo lastvalue formateado
+// puede mostrar unidades incorrectas (ej. "1.860 GB" cuando son 1860 GB = 1.86 TB).
+function rawBytesToGb(raw: number | undefined): number | null {
+  if (!raw || raw <= 0) return null;
+  return Math.round(raw / (1024 * 1024 * 1024) * 10) / 10;
 }
 
 // ─── Dashboard: Servidores VMware ─────────────────────────────────────────────
@@ -166,21 +127,33 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
 
   const deviceEntries = [...deviceMap.entries()];
 
-  // Obtener canales de todos los hosts en paralelo (evita N+1 calls secuenciales)
-  const channelResults = await Promise.all(
-    deviceEntries.map(([, deviceSensors]) => {
-      const hostPerfSensor = deviceSensors.find((s) => /^host\s*performance$/i.test(s.name.trim()));
-      return hostPerfSensor
-        ? getSensorChannels(hostPerfSensor.objid).catch(() => null)
-        : Promise.resolve(null);
-    })
+  // Identificar sensores que necesitan canales: Host Performance + Datastores
+  const hostPerfSensors    = deviceEntries.map(([, ds]) =>
+    ds.find(s => /^host\s*performance$/i.test(s.name.trim())) ?? null
   );
+  const allDatastoreSensors = deviceEntries.flatMap(([, ds]) =>
+    ds.filter(s => /datastore\s*free/i.test(s.name))
+  );
+
+  // Fetch de todos los canales en paralelo (un solo batch)
+  const [hostPerfChannelResults, dsChannelResults] = await Promise.all([
+    Promise.all(hostPerfSensors.map(s =>
+      s ? getSensorChannels(s.objid).catch(() => null) : Promise.resolve(null)
+    )),
+    Promise.all(allDatastoreSensors.map(s =>
+      getSensorChannels(s.objid).catch(() => null)
+    )),
+  ]);
+
+  // Mapa de canales de datastore por objid
+  const dsChannelsById = new Map<number, PrtgChannel[] | null>();
+  allDatastoreSensors.forEach((s, i) => dsChannelsById.set(s.objid, dsChannelResults[i]));
 
   const hosts: VmwareHost[] = deviceEntries.map(([device, deviceSensors], i) => {
     const uptimeSensor     = deviceSensors.find((s) => /^uptime$/i.test(s.name.trim()));
     const datastoreSensors = deviceSensors.filter((s) => /datastore\s*free/i.test(s.name));
     const hostPerfSensor   = deviceSensors.find((s) => /^host\s*performance$/i.test(s.name.trim()));
-    const channels         = channelResults[i];
+    const channels         = hostPerfChannelResults[i];
 
     let cpuPct = 0, cpuValue = 'N/A', cpuStatus: SensorStatus = 'unknown';
     let memPct = 0, memValue = 'N/A', memStatus: SensorStatus = 'unknown';
@@ -240,7 +213,9 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
       const freePct    = parseLastValue(s.lastvalue);
       const usedPct    = Math.max(0, 100 - freePct);
       const autoStatus: SensorStatus = usedPct > 95 ? "error" : usedPct > 85 ? "warning" : normalizePrtgStatus(s.status_raw);
-      const { freeGb, totalGb } = parseDiskSizeInfo(s.message);
+      const dsChannels  = dsChannelsById.get(s.objid);
+      const freeGb      = rawBytesToGb(dsChannels?.find(c => /^free.?bytes$/i.test(c.name))?.lastvalue_raw);
+      const totalGb     = rawBytesToGb(dsChannels?.find(c => /^available.?capacity$/i.test(c.name))?.lastvalue_raw);
       return {
         name:    s.name.replace(/datastore\s*free:\s*/i, "").trim(),
         freePct: Math.round(freePct * 10) / 10,
@@ -320,6 +295,14 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
     deviceMap.get(key)!.push(s);
   }
 
+  // Fetch canales de sensores de disco lógico en un único batch paralelo
+  const allLogicalDiskSensors = sensors.filter(s => /logical.?disk|disk.?free/i.test(s.name));
+  const diskChannelResults    = await Promise.all(
+    allLogicalDiskSensors.map(s => getSensorChannels(s.objid).catch(() => null))
+  );
+  const diskChannelsById = new Map<number, PrtgChannel[] | null>();
+  allLogicalDiskSensors.forEach((s, i) => diskChannelsById.set(s.objid, diskChannelResults[i]));
+
   const devices: BackupDevice[] = [];
 
   for (const [deviceName, deviceSensors] of deviceMap) {
@@ -331,7 +314,16 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
     const jobs: BackupJob[] = deviceSensors
       .filter(s => !/^veeam backup job status$/i.test(s.name.trim()))
       .map(s => {
-        const { freeGb, totalGb } = parseDiskSizeInfo(s.message);
+        let freeGb: number | null  = null;
+        let totalGb: number | null = null;
+        if (/logical.?disk|disk.?free/i.test(s.name)) {
+          const chs = diskChannelsById.get(s.objid);
+          freeGb    = rawBytesToGb(chs?.find(c => /^free.?bytes$/i.test(c.name))?.lastvalue_raw);
+          if (freeGb != null) {
+            const freePct = parseFloat(s.lastvalue) || 0;
+            if (freePct > 0) totalGb = Math.round(freeGb / (freePct / 100) * 10) / 10;
+          }
+        }
         return {
           name:        s.name,
           lastStatus:  normalizePrtgStatus(s.status_raw),
@@ -463,14 +455,27 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
 
   const placeholder = (): { value: string; status: SensorStatus } => ({ value: "N/A", status: "unknown" });
 
-  const servers: WindowsServer[] = [...serverMap.entries()].map(([name, data]) => ({
-    name,
-    status: normalizePrtgStatus(data.worstStatus),
-    cpu:    data.cpu    ? { value: data.cpu.lastvalue,    status: normalizePrtgStatus(data.cpu.status_raw)    } : placeholder(),
-    memory: data.memory ? { value: data.memory.lastvalue, status: normalizePrtgStatus(data.memory.status_raw) } : placeholder(),
-    disk:   data.disk   ? { value: data.disk.lastvalue, status: normalizePrtgStatus(data.disk.status_raw), freeGb: parseDiskSizeInfo(data.disk.message).freeGb } : { value: 'N/A', status: 'unknown' as SensorStatus, freeGb: null },
-    uptime: data.uptime ? { value: data.uptime.lastvalue, status: normalizePrtgStatus(data.uptime.status_raw) } : placeholder(),
-  }));
+  // Fetch canales de sensores de disco en paralelo
+  const diskEntries = [...serverMap.entries()].filter(([, d]) => d.disk);
+  const winDiskChannelResults = await Promise.all(
+    diskEntries.map(([, d]) => getSensorChannels(d.disk!.objid).catch(() => null))
+  );
+  const winDiskChannelsByServer = new Map<string, PrtgChannel[] | null>();
+  diskEntries.forEach(([name], i) => winDiskChannelsByServer.set(name, winDiskChannelResults[i]));
+
+  const servers: WindowsServer[] = [...serverMap.entries()].map(([name, data]) => {
+    const diskChannels = winDiskChannelsByServer.get(name);
+    // Canal "Total" = suma de todos los "Free Bytes X:" → espacio libre total
+    const freeGb = rawBytesToGb(diskChannels?.find(c => /^total$/i.test(c.name))?.lastvalue_raw);
+    return {
+      name,
+      status: normalizePrtgStatus(data.worstStatus),
+      cpu:    data.cpu    ? { value: data.cpu.lastvalue,    status: normalizePrtgStatus(data.cpu.status_raw)    } : placeholder(),
+      memory: data.memory ? { value: data.memory.lastvalue, status: normalizePrtgStatus(data.memory.status_raw) } : placeholder(),
+      disk:   data.disk   ? { value: data.disk.lastvalue, status: normalizePrtgStatus(data.disk.status_raw), freeGb } : { value: 'N/A', status: 'unknown' as SensorStatus, freeGb: null },
+      uptime: data.uptime ? { value: data.uptime.lastvalue, status: normalizePrtgStatus(data.uptime.status_raw) } : placeholder(),
+    };
+  });
 
   const alerts = sensors
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
