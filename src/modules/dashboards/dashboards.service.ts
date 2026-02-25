@@ -46,7 +46,7 @@ export async function getAvailableDashboards(prtgGroup: string, extraProbes: str
     if (type && !available.includes(type)) available.push(type);
   }
 
-  const order: DashboardType[] = ["servers", "backups", "networking", "windows"];
+  const order: DashboardType[] = ["servers", "backups", "networking", "windows", "sucursales"];
   const result = order.filter((t) => available.includes(t));
   setCache(cacheKey, result);
   return result;
