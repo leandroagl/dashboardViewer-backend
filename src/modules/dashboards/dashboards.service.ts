@@ -8,7 +8,7 @@ import {
 import { logger } from "../../utils/logger";
 import { getCached, setCache } from "../../utils/cache";
 
-export type DashboardType = "servers" | "backups" | "networking" | "windows";
+export type DashboardType = "servers" | "backups" | "networking" | "windows" | "sucursales";
 
 const CACHE_TTL_MS = 55_000;
 
@@ -18,6 +18,7 @@ const GROUP_MAP: { pattern: RegExp; type: DashboardType }[] = [
   { pattern: /^(backups?|veeam)$/i,                  type: "backups"    },
   { pattern: /^(networking|network|mikrotik)$/i,     type: "networking" },
   { pattern: /^(windows?\s*server|windows|wmi)$/i,   type: "windows"    },
+  { pattern: /^sucursales?$/i,                       type: "sucursales" },
 ];
 
 function groupNameToDashboard(groupName: string): DashboardType | null {
@@ -482,6 +483,68 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
     .map((s) => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
   const result: WindowsDashboard = { servers, alerts };
+  setCache(cacheKey, result);
+  return result;
+}
+// ─── Dashboard: Sucursales ────────────────────────────────────────────────────
+export interface SucursalDevice {
+  name:    string;
+  status:  SensorStatus;
+  latency: string | null;
+  message: string;
+}
+
+export interface SucursalesDashboard {
+  sucursales:   SucursalDevice[];
+  onlineCount:  number;
+  offlineCount: number;
+  alerts:       { name: string; message: string; status: SensorStatus }[];
+}
+
+export async function getSucursalesDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<SucursalesDashboard> {
+  const cacheKey = `sucursales:${prtgGroup}`;
+  const cached = getCached<SucursalesDashboard>(cacheKey, CACHE_TTL_MS);
+  if (cached) return cached;
+
+  const all     = await getSensorsByGroup(prtgGroup, extraProbes);
+  const sensors = filterByLeafGroup(all, /^sucursales?$/i);
+
+  const deviceMap = new Map<string, PrtgSensor[]>();
+  for (const s of sensors) {
+    const key = s.device || s.name;
+    if (!deviceMap.has(key)) deviceMap.set(key, []);
+    deviceMap.get(key)!.push(s);
+  }
+
+  const sucursales: SucursalDevice[] = [...deviceMap.entries()].map(([name, deviceSensors]) => {
+    const worstRaw   = Math.max(...deviceSensors.map(s => s.status_raw));
+    const status     = normalizePrtgStatus(worstRaw);
+    const pingSensor = deviceSensors.find(s => /ping/i.test(s.name)) ?? deviceSensors[0];
+    const latency    = (status === 'ok' || status === 'warning') && pingSensor?.lastvalue
+      ? pingSensor.lastvalue
+      : null;
+    return {
+      name,
+      status,
+      latency,
+      message: pingSensor?.message ?? '',
+    };
+  });
+
+  // Ordenar: offline/error primero
+  const statusOrder: Record<SensorStatus, number> = {
+    error: 0, unknown: 1, warning: 2, unusual: 3, paused: 4, ok: 5,
+  };
+  sucursales.sort((a, b) => (statusOrder[a.status] ?? 6) - (statusOrder[b.status] ?? 6));
+
+  const onlineCount  = sucursales.filter(s => s.status === 'ok').length;
+  const offlineCount = sucursales.filter(s => s.status === 'error' || s.status === 'unknown').length;
+
+  const alerts = sensors
+    .filter(s => [4, 5, 13, 14].includes(s.status_raw))
+    .map(s => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
+
+  const result: SucursalesDashboard = { sucursales, onlineCount, offlineCount, alerts };
   setCache(cacheKey, result);
   return result;
 }
