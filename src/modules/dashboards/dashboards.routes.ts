@@ -14,5 +14,6 @@ router.get('/servers',    DashboardsController.getServers);
 router.get('/backups',    DashboardsController.getBackups);
 router.get('/networking', DashboardsController.getNetworking);
 router.get('/windows',    DashboardsController.getWindows);
+router.get('/sucursales', DashboardsController.getSucursales);
 
 export default router;

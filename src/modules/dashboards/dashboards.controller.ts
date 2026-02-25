@@ -128,3 +128,22 @@ export async function getWindows(req: Request, res: Response): Promise<void> {
     sendServerError(res);
   }
 }
+
+/** GET /:clientSlug/dashboards/sucursales */
+export async function getSucursales(req: Request, res: Response): Promise<void> {
+  const ip = getClientIp(req);
+  try {
+    const access = await resolveClientAccess(req, res);
+    if (!access) return;
+
+    const data = await DashboardsService.getSucursalesDashboard(access.prtgGroup, access.extraProbes);
+
+    await audit({ usuario_id: req.user!.sub, email: req.user!.email, cliente_id: access.clienteId,
+      accion: AuditAction.DASHBOARD_VIEW, dashboard: 'sucursales', ip_origen: ip, resultado: AuditResult.OK });
+
+    sendOk(res, data);
+  } catch (err) {
+    logger.error('Error en dashboard sucursales', { error: err });
+    sendServerError(res);
+  }
+}
