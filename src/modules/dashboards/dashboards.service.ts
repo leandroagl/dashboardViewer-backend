@@ -81,6 +81,53 @@ function normalizePrtgStatus(statusRaw: number): SensorStatus {
   }
 }
 
+// ─── Parser de tamaño de disco desde texto PRTG ──────────────────────────────
+function parseDiskSizeInfo(text: string): { freeGb: number | null; totalGb: number | null } {
+  if (!text) return { freeGb: null, totalGb: null };
+  const clean = text.replace(/<[^>]+>/g, '').trim();
+
+  const toGb = (val: number, unit: string): number => {
+    const u = unit.toLowerCase();
+    if (u.startsWith('t')) return val * 1024;
+    if (u.startsWith('g')) return val;
+    if (u.startsWith('m')) return val / 1024;
+    if (u.startsWith('k')) return val / (1024 * 1024);
+    return val;
+  };
+
+  const NUM  = '(\\d+(?:[.,]\\d+)?)';
+  const UNIT = '(TByte|GByte|MByte|KByte|TB|GB|MB|KB)';
+
+  // "X unit free of Y unit"
+  const m1 = clean.match(new RegExp(`${NUM}\\s*${UNIT}\\s+free\\s+of\\s+${NUM}\\s*${UNIT}`, 'i'));
+  if (m1) {
+    return {
+      freeGb:  Math.round(toGb(parseFloat(m1[1].replace(',', '.')), m1[2]) * 10) / 10,
+      totalGb: Math.round(toGb(parseFloat(m1[3].replace(',', '.')), m1[4]) * 10) / 10,
+    };
+  }
+
+  // "X unit free"
+  const m2 = clean.match(new RegExp(`${NUM}\\s*${UNIT}\\s+free`, 'i'));
+  if (m2) {
+    return {
+      freeGb:  Math.round(toGb(parseFloat(m2[1].replace(',', '.')), m2[2]) * 10) / 10,
+      totalGb: null,
+    };
+  }
+
+  // "free: X unit" or "free X unit"
+  const m3 = clean.match(new RegExp(`free[:\\s]+${NUM}\\s*${UNIT}`, 'i'));
+  if (m3) {
+    return {
+      freeGb:  Math.round(toGb(parseFloat(m3[1].replace(',', '.')), m3[2]) * 10) / 10,
+      totalGb: null,
+    };
+  }
+
+  return { freeGb: null, totalGb: null };
+}
+
 // ─── Dashboard: Servidores VMware ─────────────────────────────────────────────
 export interface VmwareHost {
   name:       string;
@@ -90,7 +137,7 @@ export interface VmwareHost {
   memory:     { value: string; pct: number; status: SensorStatus };
   disk:       { read: { value: string; status: SensorStatus }; write: { value: string; status: SensorStatus } };
   vms:        { name: string; status: SensorStatus }[];
-  datastores: { name: string; freePct: number; usedPct: number; status: SensorStatus }[];
+  datastores: { name: string; freePct: number; usedPct: number; status: SensorStatus; freeGb: number | null; totalGb: number | null }[];
   alerts:     { name: string; message: string; status: SensorStatus }[];
 }
 
@@ -193,11 +240,14 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
       const freePct    = parseLastValue(s.lastvalue);
       const usedPct    = Math.max(0, 100 - freePct);
       const autoStatus: SensorStatus = usedPct > 95 ? "error" : usedPct > 85 ? "warning" : normalizePrtgStatus(s.status_raw);
+      const { freeGb, totalGb } = parseDiskSizeInfo(s.message);
       return {
         name:    s.name.replace(/datastore\s*free:\s*/i, "").trim(),
         freePct: Math.round(freePct * 10) / 10,
         usedPct: Math.round(usedPct * 10) / 10,
         status:  autoStatus,
+        freeGb,
+        totalGb,
       };
     });
 
@@ -236,6 +286,8 @@ export interface BackupJob {
   lastStatus:  SensorStatus;
   lastMessage: string;
   lastValue:   string;
+  freeGb:      number | null;
+  totalGb:     number | null;
 }
 
 export interface BackupDevice {
@@ -278,12 +330,17 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
 
     const jobs: BackupJob[] = deviceSensors
       .filter(s => !/^veeam backup job status$/i.test(s.name.trim()))
-      .map(s => ({
-        name:        s.name,
-        lastStatus:  normalizePrtgStatus(s.status_raw),
-        lastMessage: s.message,
-        lastValue:   s.lastvalue,
-      }));
+      .map(s => {
+        const { freeGb, totalGb } = parseDiskSizeInfo(s.message);
+        return {
+          name:        s.name,
+          lastStatus:  normalizePrtgStatus(s.status_raw),
+          lastMessage: s.message,
+          lastValue:   s.lastvalue,
+          freeGb,
+          totalGb,
+        };
+      });
 
     const worstRaw = Math.max(...deviceSensors.map(s => s.status_raw));
     const alerts   = jobs
@@ -371,7 +428,7 @@ export interface WindowsServer {
   status: SensorStatus;
   cpu:    { value: string; status: SensorStatus };
   memory: { value: string; status: SensorStatus };
-  disk:   { value: string; status: SensorStatus };
+  disk:   { value: string; status: SensorStatus; freeGb: number | null };
   uptime: { value: string; status: SensorStatus };
 }
 
@@ -411,7 +468,7 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
     status: normalizePrtgStatus(data.worstStatus),
     cpu:    data.cpu    ? { value: data.cpu.lastvalue,    status: normalizePrtgStatus(data.cpu.status_raw)    } : placeholder(),
     memory: data.memory ? { value: data.memory.lastvalue, status: normalizePrtgStatus(data.memory.status_raw) } : placeholder(),
-    disk:   data.disk   ? { value: data.disk.lastvalue,   status: normalizePrtgStatus(data.disk.status_raw)   } : placeholder(),
+    disk:   data.disk   ? { value: data.disk.lastvalue, status: normalizePrtgStatus(data.disk.status_raw), freeGb: parseDiskSizeInfo(data.disk.message).freeGb } : { value: 'N/A', status: 'unknown' as SensorStatus, freeGb: null },
     uptime: data.uptime ? { value: data.uptime.lastvalue, status: normalizePrtgStatus(data.uptime.status_raw) } : placeholder(),
   }));
 
