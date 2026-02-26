@@ -223,8 +223,9 @@ export async function getSensorChannels(
       id:      String(sensorId),
     });
     return result?.channels ?? [];
-  } catch (err) {
-    logger.warn("getSensorChannels failed, using fallback", { sensorId });
-    throw err;
+  } catch {
+    // prtgGet ya registró el error HTTP; devolvemos [] para que el caller
+    // use sus valores de fallback sin generar un segundo log redundante.
+    return [];
   }
 }
