@@ -78,6 +78,7 @@ function buildAuthParams(): URLSearchParams {
 async function prtgGet<T>(
   endpoint: string,
   extraParams: Record<string, string> = {},
+  quiet = false,
 ): Promise<T> {
   const params = buildAuthParams();
   params.set("output", "json");
@@ -120,9 +121,9 @@ async function prtgGet<T>(
   if (!response.ok) {
     const body      = await response.text().catch(() => "");
     const maskedUrl = url.replace(/apitoken=[^&]+/, "apitoken=***");
-    // 4xx: errores de cliente (permisos, throttling, IIS auth) — recuperables, warn.
-    // 5xx: errores de servidor — críticos, error.
-    const logFn = response.status < 500 ? logger.warn : logger.error;
+    // 4xx: errores de cliente — recuperables, warn (o debug si quiet=true).
+    // 5xx: errores de servidor — críticos, error siempre.
+    const logFn = response.status >= 500 ? logger.error : quiet ? logger.debug : logger.warn;
     logFn("PRTG HTTP error", {
       status:   response.status,
       endpoint: maskedUrl,
@@ -221,7 +222,7 @@ export async function getSensorChannels(
       content: "channels",
       columns: "name,lastvalue,lastvalue_raw",
       id:      String(sensorId),
-    });
+    }, true);
     return result?.channels ?? [];
   } catch {
     // prtgGet ya registró el error HTTP; devolvemos [] para que el caller
