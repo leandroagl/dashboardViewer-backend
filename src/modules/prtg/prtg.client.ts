@@ -216,17 +216,14 @@ export async function getSensorsByTag(
 export async function getSensorChannels(
   sensorId: number,
 ): Promise<PrtgChannel[]> {
-  try {
-    const result = await prtgGet<PrtgChannelResponse>("/api/table.json", {
-      output:  "json",
-      content: "channels",
-      columns: "name,lastvalue,lastvalue_raw",
-      id:      String(sensorId),
-    }, true);
-    return result?.channels ?? [];
-  } catch {
-    // prtgGet ya registró el error HTTP; devolvemos [] para que el caller
-    // use sus valores de fallback sin generar un segundo log redundante.
-    return [];
-  }
+  // quiet=true: los 400 de sensores que no soportan channels se loguean
+  // en debug (no warn). Se propaga la excepción para que los callers
+  // capturen con .catch(() => null) y usen su lógica de fallback.
+  const result = await prtgGet<PrtgChannelResponse>("/api/table.json", {
+    output:  "json",
+    content: "channels",
+    columns: "name,lastvalue,lastvalue_raw",
+    id:      String(sensorId),
+  }, true);
+  return result?.channels ?? [];
 }
