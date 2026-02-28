@@ -123,12 +123,6 @@ export async function refresh(req: Request, res: Response): Promise<void> {
       clienteSlug:        result.clienteSlug,
       mustChangePassword: result.mustChangePassword,
     });
-
-    void audit({
-      accion: AuditAction.TOKEN_REFRESH,
-      ip_origen: ip,
-      resultado: AuditResult.OK,
-    });
   } catch (err) {
     logger.error("Error en refresh", {
       error: err instanceof Error ? err.message : String(err),
