@@ -51,13 +51,13 @@ export async function getAllUsers(filters: {
   const result = await pool.query(
     `SELECT
        u.id, u.email, u.nombre, u.rol, u.cliente_id,
-       u.activo, u.debe_cambiar_password, u.es_kiosk,
+       u.activo, u.debe_cambiar_password, u.es_kiosk, u.es_superadmin,
        u.ultimo_acceso, u.creado_por, u.creado_en,
        c.nombre AS cliente_nombre
      FROM usuarios u
      LEFT JOIN clientes c ON u.cliente_id = c.id
      ${where}
-     ORDER BY u.creado_en DESC`,
+     ORDER BY u.es_superadmin DESC, u.creado_en DESC`,
     params
   );
   return result.rows;
@@ -66,7 +66,7 @@ export async function getAllUsers(filters: {
 export async function getUserById(id: string): Promise<Omit<User, 'password_hash'> | null> {
   const result = await pool.query(
     `SELECT u.id, u.email, u.nombre, u.rol, u.cliente_id,
-            u.activo, u.debe_cambiar_password, u.es_kiosk,
+            u.activo, u.debe_cambiar_password, u.es_kiosk, u.es_superadmin,
             u.ultimo_acceso, u.creado_por, u.creado_en
      FROM usuarios u WHERE u.id = $1`,
     [id]
@@ -129,10 +129,15 @@ export interface UpdateUserInput {
 }
 
 export async function updateUser(id: string, input: UpdateUserInput): Promise<Omit<User, 'password_hash'> | null> {
+  // Verificar si el usuario es superadmin (inmutable)
+  const current = await getUserById(id);
+  if (!current) return null;
+  if (current.es_superadmin) {
+    throw new UserValidationError('Este usuario es inmutable y no puede ser modificado.');
+  }
+
   // Validar dominio admin: cruzar el rol final con el email final
   if (input.rol === UserRole.ADMIN_ONDRA || input.email !== undefined) {
-    const current = await getUserById(id);
-    if (!current) return null;
     const finalRol   = input.rol   ?? current.rol;
     const finalEmail = input.email ?? current.email;
     if (finalRol === UserRole.ADMIN_ONDRA) assertAdminDomain(finalEmail);

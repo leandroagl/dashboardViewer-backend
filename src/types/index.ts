@@ -58,6 +58,7 @@ export interface User {
   activo:                boolean;
   debe_cambiar_password: boolean;
   es_kiosk:              boolean;
+  es_superadmin:         boolean;        // Usuario inmutable del sistema (seed)
   ultimo_acceso?:        Date;
   creado_por?:           string;
   creado_en:             Date;

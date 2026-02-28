@@ -127,6 +127,13 @@ export async function setStatus(req: Request, res: Response): Promise<void> {
   }
 
   try {
+    const target = await UsersService.getUserById(req.params.id);
+    if (!target) { sendError(res, 404, 'Usuario no encontrado.'); return; }
+    if (target.es_superadmin) {
+      sendError(res, 403, 'Este usuario es inmutable y no puede ser modificado.');
+      return;
+    }
+
     const ok = await UsersService.setUserActive(req.params.id, activo);
     if (!ok) { sendError(res, 404, 'Usuario no encontrado.'); return; }
 
@@ -196,6 +203,13 @@ export async function deleteUserHandler(req: Request, res: Response): Promise<vo
     // No permitir auto-eliminación
     if (id === req.user!.sub) {
       sendError(res, 400, 'No podés eliminar tu propio usuario.');
+      return;
+    }
+    // No permitir eliminar al superadmin
+    const target = await UsersService.getUserById(id);
+    if (!target) { sendError(res, 404, 'Usuario no encontrado.'); return; }
+    if (target.es_superadmin) {
+      sendError(res, 403, 'Este usuario es inmutable y no puede ser eliminado.');
       return;
     }
     const result = await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
