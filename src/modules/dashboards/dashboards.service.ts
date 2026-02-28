@@ -103,6 +103,7 @@ export interface VmwareHost {
   memory:     { value: string; pct: number; status: SensorStatus };
   disk:       { read: { value: string; status: SensorStatus }; write: { value: string; status: SensorStatus } };
   vms:        { name: string; status: SensorStatus }[];
+  snapshots:  { name: string; value: string; status: SensorStatus }[];
   datastores: { name: string; freePct: number; usedPct: number; status: SensorStatus; freeGb: number | null; totalGb: number | null }[];
   alerts:     { name: string; message: string; status: SensorStatus }[];
 }
@@ -205,6 +206,14 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
       !/datastore|uptime|snapshot|traffic|switch|vmk|host\s*performance/i.test(s.name)
     );
 
+    const snapshots = deviceSensors
+      .filter(s => /snapshot/i.test(s.name))
+      .map(s => ({
+        name:   s.name.replace(/^vmware\s*/i, '').trim(),
+        value:  s.lastvalue,
+        status: normalizePrtgStatus(s.status_raw),
+      }));
+
     const worstStatus = deviceSensors.length > 0
       ? Math.max(...deviceSensors.map((s) => s.status_raw))
       : 3;
@@ -246,6 +255,7 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
         write: { value: diskWriteValue, status: diskWriteStatus },
       },
       vms,
+      snapshots,
       datastores,
       alerts:     hostAlerts,
     };
