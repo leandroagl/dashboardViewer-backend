@@ -5,6 +5,23 @@ import { pool } from '../../config/database/pool';
 import { User, UserRole } from '../../types';
 import { generateRandomPassword } from '../../utils/password';
 
+export class UserValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UserValidationError';
+  }
+}
+
+const ADMIN_EMAIL_DOMAIN = '@ondra.com.ar';
+
+function assertAdminDomain(email: string): void {
+  if (!email.toLowerCase().endsWith(ADMIN_EMAIL_DOMAIN)) {
+    throw new UserValidationError(
+      `Solo usuarios con email ${ADMIN_EMAIL_DOMAIN} pueden ser administradores.`
+    );
+  }
+}
+
 // ─── Consultas ────────────────────────────────────────────────────────────────
 
 /** Lista todos los usuarios con nombre del cliente */
@@ -74,6 +91,8 @@ export interface CreateUserResult {
 
 /** Crea un usuario con contraseña generada automáticamente */
 export async function createUser(input: CreateUserInput, creadoPor: string): Promise<CreateUserResult> {
+  if (input.rol === UserRole.ADMIN_ONDRA) assertAdminDomain(input.email);
+
   const plainPassword = generateRandomPassword();
   const passwordHash  = await bcrypt.hash(plainPassword, 12);
   const esKiosk       = input.es_kiosk ?? false;
@@ -103,21 +122,45 @@ export async function createUser(input: CreateUserInput, creadoPor: string): Pro
 
 export interface UpdateUserInput {
   nombre?:     string;
+  email?:      string;
+  rol?:        UserRole;
   cliente_id?: string | null; // null = desasignar cliente explícitamente
+  es_kiosk?:   boolean;
 }
 
 export async function updateUser(id: string, input: UpdateUserInput): Promise<Omit<User, 'password_hash'> | null> {
-  const sets: string[]   = [];
+  // Validar dominio admin: cruzar el rol final con el email final
+  if (input.rol === UserRole.ADMIN_ONDRA || input.email !== undefined) {
+    const current = await getUserById(id);
+    if (!current) return null;
+    const finalRol   = input.rol   ?? current.rol;
+    const finalEmail = input.email ?? current.email;
+    if (finalRol === UserRole.ADMIN_ONDRA) assertAdminDomain(finalEmail);
+  }
+
+  const sets: string[]    = [];
   const params: unknown[] = [];
 
   if (input.nombre !== undefined) {
     params.push(input.nombre);
     sets.push(`nombre = $${params.length}`);
   }
+  if (input.email !== undefined) {
+    params.push(input.email.toLowerCase().trim());
+    sets.push(`email = $${params.length}`);
+  }
+  if (input.rol !== undefined) {
+    params.push(input.rol);
+    sets.push(`rol = $${params.length}`);
+  }
   // Usar 'in' para distinguir "campo omitido" de "campo seteado a null"
   if ('cliente_id' in input) {
     params.push(input.cliente_id ?? null);
     sets.push(`cliente_id = $${params.length}`);
+  }
+  if (input.es_kiosk !== undefined) {
+    params.push(input.es_kiosk);
+    sets.push(`es_kiosk = $${params.length}`);
   }
 
   if (sets.length === 0) return getUserById(id);
