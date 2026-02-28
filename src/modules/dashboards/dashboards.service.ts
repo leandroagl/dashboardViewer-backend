@@ -12,6 +12,10 @@ export type DashboardType = "servers" | "backups" | "networking" | "windows" | "
 
 const CACHE_TTL_MS = 55_000;
 
+// Último "Last Job Run" conocido por sensor — persiste entre ciclos de cache
+// para evitar mostrar "—" en los ciclos donde PRTG rechaza temporalmente el acceso a canales
+const lastKnownJobRun = new Map<number, string>();
+
 // ─── Mapeo grupo PRTG → dashboard ────────────────────────────────────────────
 const GROUP_MAP: { pattern: RegExp; type: DashboardType }[] = [
   { pattern: /^servers?$/i,                          type: "servers"    },
@@ -271,13 +275,13 @@ export interface BackupDevice {
   type:    'veeam' | 'acronis' | 'qnap' | 'other';
   status:  SensorStatus;
   jobs:    BackupJob[];
-  alerts:  { name: string; message: string }[];
+  alerts:  { name: string; message: string; status: SensorStatus }[];
 }
 
 export interface BackupsDashboard {
   successRate7d: number;
   devices:       BackupDevice[];
-  alerts:        { name: string; message: string }[];
+  alerts:        { name: string; message: string; status: SensorStatus }[];
 }
 
 export async function getBackupsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<BackupsDashboard> {
@@ -296,13 +300,26 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
     deviceMap.get(key)!.push(s);
   }
 
-  // Fetch canales de sensores de disco lógico en un único batch paralelo
+  // Fetch canales en un único batch paralelo:
+  // - Sensores de disco lógico → espacio libre GB
+  // - Sensores de jobs Veeam   → canal "Last Job Run" (horas desde el último backup)
   const allLogicalDiskSensors = sensors.filter(s => /logical.?disk|disk.?free/i.test(s.name));
-  const diskChannelResults    = await Promise.all(
-    allLogicalDiskSensors.map(s => getSensorChannels(s.objid).catch(() => null))
+  const veeamJobSensors       = sensors.filter(s =>
+    /veeam/i.test(s.device || '') &&
+    !/logical.?disk|disk.?free/i.test(s.name) &&
+    !/^veeam backup job status$/i.test(s.name.trim())
   );
+
+  const [diskChannelResults, veeamChannelResults] = await Promise.all([
+    Promise.all(allLogicalDiskSensors.map(s => getSensorChannels(s.objid).catch(() => null))),
+    Promise.all(veeamJobSensors.map(s => getSensorChannels(s.objid).catch(() => null))),
+  ]);
+
   const diskChannelsById = new Map<number, PrtgChannel[] | null>();
   allLogicalDiskSensors.forEach((s, i) => diskChannelsById.set(s.objid, diskChannelResults[i]));
+
+  const veeamChannelsById = new Map<number, PrtgChannel[] | null>();
+  veeamJobSensors.forEach((s, i) => veeamChannelsById.set(s.objid, veeamChannelResults[i]));
 
   const devices: BackupDevice[] = [];
 
@@ -325,11 +342,16 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
             if (freePct > 0) totalGb = Math.round(freeGb / (freePct / 100) * 10) / 10;
           }
         }
+        // Canal "Last Job Run" → horas desde el último backup (solo sensores Veeam)
+        const isVeeamSensor = veeamChannelsById.has(s.objid);
+        const jobChannels   = veeamChannelsById.get(s.objid);
+        const lastRunValue  = jobChannels?.find(c => /last.?job.?run/i.test(c.name))?.lastvalue;
+        if (lastRunValue) lastKnownJobRun.set(s.objid, lastRunValue);
         return {
           name:        s.name,
           lastStatus:  normalizePrtgStatus(s.status_raw),
           lastMessage: s.message,
-          lastValue:   s.lastvalue,
+          lastValue:   isVeeamSensor ? (lastKnownJobRun.get(s.objid) ?? '') : s.lastvalue,
           freeGb,
           totalGb,
         };
@@ -338,7 +360,7 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
     const worstRaw = Math.max(...deviceSensors.map(s => s.status_raw));
     const alerts   = jobs
       .filter(j => j.lastStatus === 'error' || j.lastStatus === 'warning')
-      .map(j => ({ name: j.name, message: j.lastMessage }));
+      .map(j => ({ name: j.name, message: j.lastMessage, status: j.lastStatus }));
 
     devices.push({ name: deviceName, type, status: normalizePrtgStatus(worstRaw), jobs, alerts });
   }
@@ -464,6 +486,15 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
   const winDiskChannelsByServer = new Map<string, PrtgChannel[] | null>();
   diskEntries.forEach(([name], i) => winDiskChannelsByServer.set(name, winDiskChannelResults[i]));
 
+  // PRTG "Memory" sensor reporta % libre → convertir a % usado para el gauge
+  const parseWinFloat = (val: string): number =>
+    parseFloat(val.replace(",", ".").replace(/[^0-9.]/g, "")) || 0;
+  const memFreeToUsed = (val: string): string => {
+    if (!val.includes("%")) return val;
+    const used = Math.round((100 - parseWinFloat(val)) * 10) / 10;
+    return `${used} %`;
+  };
+
   const servers: WindowsServer[] = [...serverMap.entries()].map(([name, data]) => {
     const diskChannels = winDiskChannelsByServer.get(name);
     // Canal "Total" = suma de todos los "Free Bytes X:" → espacio libre total
@@ -471,8 +502,8 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
     return {
       name,
       status: normalizePrtgStatus(data.worstStatus),
-      cpu:    data.cpu    ? { value: data.cpu.lastvalue,    status: normalizePrtgStatus(data.cpu.status_raw)    } : placeholder(),
-      memory: data.memory ? { value: data.memory.lastvalue, status: normalizePrtgStatus(data.memory.status_raw) } : placeholder(),
+      cpu:    data.cpu    ? { value: data.cpu.lastvalue,                 status: normalizePrtgStatus(data.cpu.status_raw)    } : placeholder(),
+      memory: data.memory ? { value: memFreeToUsed(data.memory.lastvalue), status: normalizePrtgStatus(data.memory.status_raw) } : placeholder(),
       disk:   data.disk   ? { value: data.disk.lastvalue, status: normalizePrtgStatus(data.disk.status_raw), freeGb } : { value: 'N/A', status: 'unknown' as SensorStatus, freeGb: null },
       uptime: data.uptime ? { value: data.uptime.lastvalue, status: normalizePrtgStatus(data.uptime.status_raw) } : placeholder(),
     };
@@ -480,7 +511,7 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
 
   const alerts = sensors
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
-    .map((s) => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
+    .map((s) => ({ name: `${s.device} — ${s.name}`, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
   const result: WindowsDashboard = { servers, alerts };
   setCache(cacheKey, result);
