@@ -173,8 +173,8 @@ COOKIE_SECURE=true
 ```powershell
 cd C:\apps\ondra-monitor\backend
 
-# Solo dependencias de producción
-npm install --omit=dev
+# Instalar todas las dependencias (incluyendo devDependencies para tener tsc)
+npm install
 
 # Compilar TypeScript → dist/
 npm run build
@@ -182,6 +182,10 @@ npm run build
 # Verificar que el build levanta (Ctrl+C para detener)
 node dist/index.js
 ```
+
+> `typescript` es una devDependency. El comando `npm install --omit=dev` no instala TypeScript
+> y hace que `tsc` no sea encontrado. En producción se instala todo para compilar y luego
+> se arranca con `node dist/index.js` (que no depende de TypeScript en runtime).
 
 ### 5. Ejecutar migraciones e inicializar admin
 
@@ -245,9 +249,9 @@ pm2 stop ondra-monitor-backend      # Detener
 
 ```powershell
 # 1. Copiar los nuevos archivos al servidor
-# 2. Instalar dependencias si cambiaron
+# 2. Instalar dependencias si cambiaron (npm install, no --omit=dev, para tener tsc)
 cd C:\apps\ondra-monitor\backend
-npm install --omit=dev
+npm install
 # 3. Recompilar
 npm run build
 # 4. Migrar la base de datos (idempotente)
