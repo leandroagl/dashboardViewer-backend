@@ -61,14 +61,22 @@ const httpsAgent = new https.Agent({
 /**
  * Construye los parámetros de autenticación para la API de PRTG.
  *
- * PRTG autentica mediante API Token, obtenido en:
- *   Setup → My Account → API Token → Agregar nuevo token
- * Se recomienda crear un usuario de solo lectura dedicado al portal
- * y generar el token para ese usuario específico.
+ * Prioridad:
+ *   1. PRTG_USERNAME + PRTG_PASSHASH  → autenticación por usuario/passhash
+ *   2. PRTG_API_TOKEN                 → autenticación por API Token
+ *
+ * El passhash se obtiene desde PRTG en:
+ *   Setup → My Account → My Settings (campo "Passhash")
+ * O via API: GET /api/getpasshash.htm?username=USER&password=PASS
  */
 function buildAuthParams(): URLSearchParams {
   const params = new URLSearchParams();
-  params.set("apitoken", env.prtg.apiToken);
+  if (env.prtg.username && env.prtg.passhash) {
+    params.set("username", env.prtg.username);
+    params.set("passhash", env.prtg.passhash);
+  } else {
+    params.set("apitoken", env.prtg.apiToken);
+  }
   return params;
 }
 

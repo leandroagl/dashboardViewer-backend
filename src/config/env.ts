@@ -43,8 +43,12 @@ export const env = {
 
   // PRTG
   prtg: {
-    baseUrl: requireEnv("PRTG_BASE_URL"),
-    apiToken: requireEnv("PRTG_API_TOKEN"),
+    baseUrl:  requireEnv("PRTG_BASE_URL"),
+    // Autenticación: si PRTG_USERNAME + PRTG_PASSHASH están definidos, tienen prioridad.
+    // De lo contrario se usa PRTG_API_TOKEN.
+    apiToken:  optionalEnv("PRTG_API_TOKEN",  ""),
+    username:  optionalEnv("PRTG_USERNAME",   ""),
+    passhash:  optionalEnv("PRTG_PASSHASH",   ""),
     // false por defecto: PRTG on-premise típicamente usa certificados auto-firmados.
     // Setear a true en producción si se instala un certificado válido.
     rejectUnauthorized:
