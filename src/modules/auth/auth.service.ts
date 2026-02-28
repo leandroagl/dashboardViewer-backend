@@ -81,6 +81,7 @@ export interface LoginResult {
   refreshToken: string;
   refreshExpiry: Date | null;
   mustChangePassword: boolean;
+  nombre: string;
   rol: UserRole;
   clienteSlug: string | null;
   dashboardsDisponibles: string[];
@@ -138,6 +139,7 @@ export async function loginUser(
     refreshToken,
     refreshExpiry,
     mustChangePassword:    user.debe_cambiar_password,
+    nombre:                user.nombre as string,
     rol:                   user.rol as UserRole,
     clienteSlug:           user.cliente_slug ?? null,
     dashboardsDisponibles: [],
@@ -152,6 +154,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   accessToken: string;
   newRefreshToken: string;
   refreshExpiry: Date | null;
+  nombre: string;
   rol: UserRole;
   clienteSlug: string | null;
   mustChangePassword: boolean;
@@ -180,7 +183,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   if (record.expira_en && new Date(record.expira_en) < new Date()) return null;
 
   const userResult = await pool.query(
-    `SELECT u.activo, u.debe_cambiar_password, u.rol, c.slug AS cliente_slug
+    `SELECT u.activo, u.debe_cambiar_password, u.rol, u.nombre, c.slug AS cliente_slug
      FROM usuarios u
      LEFT JOIN clientes c ON u.cliente_id = c.id
      WHERE u.id = $1`,
@@ -223,6 +226,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
     accessToken,
     newRefreshToken,
     refreshExpiry,
+    nombre:            userRow.nombre as string,
     rol:               userRow.rol as UserRole,
     clienteSlug:       userRow.cliente_slug ?? null,
     mustChangePassword: userRow.debe_cambiar_password,

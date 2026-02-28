@@ -76,10 +76,11 @@ export async function login(req: Request, res: Response): Promise<void> {
     // Almacenar refresh token en cookie HttpOnly
     setRefreshCookie(res, result.refreshToken, result.refreshExpiry);
     sendOk(res, {
-      accessToken: result.accessToken,
-      mustChangePassword: result.mustChangePassword,
-      rol: result.rol,
-      clienteSlug: result.clienteSlug,
+      accessToken:           result.accessToken,
+      mustChangePassword:    result.mustChangePassword,
+      nombre:                result.nombre,
+      rol:                   result.rol,
+      clienteSlug:           result.clienteSlug,
       dashboardsDisponibles: result.dashboardsDisponibles,
     });
     void audit({
@@ -117,6 +118,7 @@ export async function refresh(req: Request, res: Response): Promise<void> {
     setRefreshCookie(res, result.newRefreshToken, result.refreshExpiry);
     sendOk(res, {
       accessToken:        result.accessToken,
+      nombre:             result.nombre,
       rol:                result.rol,
       clienteSlug:        result.clienteSlug,
       mustChangePassword: result.mustChangePassword,
