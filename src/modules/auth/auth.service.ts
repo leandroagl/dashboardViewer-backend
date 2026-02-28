@@ -152,6 +152,9 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   accessToken: string;
   newRefreshToken: string;
   refreshExpiry: Date | null;
+  rol: UserRole;
+  clienteSlug: string | null;
+  mustChangePassword: boolean;
 } | null> {
   let payload: JwtPayload;
   try {
@@ -177,10 +180,14 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   if (record.expira_en && new Date(record.expira_en) < new Date()) return null;
 
   const userResult = await pool.query(
-    `SELECT activo FROM usuarios WHERE id = $1`,
+    `SELECT u.activo, u.debe_cambiar_password, u.rol, c.slug AS cliente_slug
+     FROM usuarios u
+     LEFT JOIN clientes c ON u.cliente_id = c.id
+     WHERE u.id = $1`,
     [payload.sub],
   );
-  if (!userResult.rows[0]?.activo) return null;
+  const userRow = userResult.rows[0];
+  if (!userRow?.activo) return null;
 
   // Solo rotar si vence en menos de 24 horas
   const rawPayload = payload as JwtPayload & { exp?: number; iat?: number };
@@ -212,7 +219,14 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
     ({ accessToken } = generateTokenPair(cleanPayload as JwtPayload, payload.es_kiosk ?? false));
   }
 
-  return { accessToken, newRefreshToken, refreshExpiry };
+  return {
+    accessToken,
+    newRefreshToken,
+    refreshExpiry,
+    rol:               userRow.rol as UserRole,
+    clienteSlug:       userRow.cliente_slug ?? null,
+    mustChangePassword: userRow.debe_cambiar_password,
+  };
 }
 
 // ─── Logout ───────────────────────────────────────────────────────────────────

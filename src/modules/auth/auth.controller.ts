@@ -63,34 +63,30 @@ export async function login(req: Request, res: Response): Promise<void> {
     const result = await AuthService.loginUser(email, password);
 
     if (!result) {
-      // Login fallido: registrar auditoría con información mínima
-      await audit({
+      sendError(res, 401, "Email o contraseña incorrectos.");
+      void audit({
         email,
         accion: AuditAction.LOGIN_FAILED,
         ip_origen: ip,
         resultado: AuditResult.UNAUTHORIZED,
       });
-      sendError(res, 401, "Email o contraseña incorrectos.");
       return;
     }
 
     // Almacenar refresh token en cookie HttpOnly
     setRefreshCookie(res, result.refreshToken, result.refreshExpiry);
-
-    // Auditoría de login exitoso
-    await audit({
-      email,
-      accion: AuditAction.LOGIN,
-      ip_origen: ip,
-      resultado: AuditResult.OK,
-    });
-
     sendOk(res, {
       accessToken: result.accessToken,
       mustChangePassword: result.mustChangePassword,
       rol: result.rol,
       clienteSlug: result.clienteSlug,
       dashboardsDisponibles: result.dashboardsDisponibles,
+    });
+    void audit({
+      email,
+      accion: AuditAction.LOGIN,
+      ip_origen: ip,
+      resultado: AuditResult.OK,
     });
   } catch (err) {
     logger.error("Error en login", { error: err });
@@ -119,14 +115,18 @@ export async function refresh(req: Request, res: Response): Promise<void> {
 
     // Rotar el refresh token en la cookie
     setRefreshCookie(res, result.newRefreshToken, result.refreshExpiry);
+    sendOk(res, {
+      accessToken:        result.accessToken,
+      rol:                result.rol,
+      clienteSlug:        result.clienteSlug,
+      mustChangePassword: result.mustChangePassword,
+    });
 
-    await audit({
+    void audit({
       accion: AuditAction.TOKEN_REFRESH,
       ip_origen: ip,
       resultado: AuditResult.OK,
     });
-
-    sendOk(res, { accessToken: result.accessToken });
   } catch (err) {
     logger.error("Error en refresh", {
       error: err instanceof Error ? err.message : String(err),
@@ -146,9 +146,10 @@ export async function logout(req: Request, res: Response): Promise<void> {
     }
 
     clearRefreshCookie(res);
+    sendOk(res, { message: "Sesión cerrada correctamente." });
 
     if (req.user) {
-      await audit({
+      void audit({
         usuario_id: req.user.sub,
         email: req.user.email,
         cliente_id: req.user.cliente_id ?? undefined,
@@ -157,8 +158,6 @@ export async function logout(req: Request, res: Response): Promise<void> {
         resultado: AuditResult.OK,
       });
     }
-
-    sendOk(res, { message: "Sesión cerrada correctamente." });
   } catch (err) {
     logger.error("Error en logout", { error: err });
     sendServerError(res);
