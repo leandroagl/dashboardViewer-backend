@@ -63,14 +63,8 @@ npm install
 ### 3. Crear base de datos
 
 ```bash
-# Crear la base de datos en PostgreSQL
 createdb ondra_monitor
 ```
-
-> Si la DB corre en Docker:
-> ```bash
-> docker exec <contenedor-postgres> psql -U ondra -d ondra_monitor -c "SELECT 1"
-> ```
 
 ### 4. Ejecutar migraciones
 
@@ -93,129 +87,158 @@ npm run dev   # ts-node-dev con hot reload en http://localhost:3000
 
 ---
 
-## Build de producción
-
-```bash
-npm run build
-```
-
-Compila TypeScript a `dist/`. El artefacto resultante es JS puro ejecutable con Node.js, sin dependencias de TypeScript en runtime.
-
-```bash
-# Probar el build localmente antes de desplegar
-node dist/index.js
-```
-
-> El build requiere que `.env` esté presente con todas las variables de producción configuradas.
-
----
-
 ## Despliegue en Windows Server
+
+El backend corre como servicio de Windows gestionado por **PM2**. PostgreSQL se asume ya instalado en el servidor.
 
 ### Requisitos previos
 
-| Componente | Versión mínima | Descarga |
-|------------|----------------|----------|
+| Componente | Versión mínima | Instalación |
+|------------|----------------|-------------|
 | Node.js    | 18 LTS         | https://nodejs.org |
-| PostgreSQL | 14+            | https://www.postgresql.org/download/windows |
 | PM2        | última         | `npm install -g pm2` |
-
-### 1. Instalar dependencias del sistema
+| NSSM       | última         | https://nssm.cc/download (para PM2 como servicio) |
 
 ```powershell
-# Verificar instalaciones
-node --version    # >= 18.x
-npm --version
-
-# Instalar PM2 y su integración con Windows Service
+node --version    # verificar >= 18.x
 npm install -g pm2
-npm install -g pm2-windows-service
 ```
 
-### 2. Configurar PostgreSQL
+### 1. Preparar la base de datos
+
+En psql o pgAdmin, crear usuario y base de datos:
 
 ```sql
--- En psql o pgAdmin, crear usuario y base de datos:
 CREATE USER ondra WITH PASSWORD 'password_seguro';
 CREATE DATABASE ondra_monitor OWNER ondra;
 GRANT ALL PRIVILEGES ON DATABASE ondra_monitor TO ondra;
 ```
 
-### 3. Desplegar la aplicación
+### 2. Ubicar el código en el servidor
 
-```powershell
-# Copiar el proyecto al servidor, por ejemplo: C:\apps\ondra-monitor-backend\
+Copiar el repositorio completo al servidor. Ruta recomendada:
 
-# Instalar solo dependencias de producción (sin devDependencies)
-npm install --omit=dev
-
-# Crear y configurar .env (ver sección Variables de entorno)
-# Valores clave para producción:
-#   NODE_ENV=production
-#   COOKIE_SECURE=true
-#   COOKIE_DOMAIN=monitor.ondra.com.ar
-#   CORS_ORIGIN=https://monitor.ondra.com.ar
-
-# Compilar TypeScript a JavaScript
-npm run build
-
-# Ejecutar migraciones (idempotente, seguro de re-ejecutar)
-npm run db:migrate
-
-# Crear usuario administrador inicial (solo la primera vez)
-npm run db:seed
+```
+C:\apps\ondra-monitor\backend\
 ```
 
-### 4. Iniciar con PM2 como servicio de Windows
+### 3. Crear el archivo `.env` de producción
+
+Crear `C:\apps\ondra-monitor\backend\.env` con los valores reales:
+
+```env
+# ─── Servidor ────────────────────────────────────────────────────────────────
+PORT=3000
+NODE_ENV=production
+CORS_ORIGIN=https://monitor.ondra.com.ar
+
+# ─── Base de datos ───────────────────────────────────────────────────────────
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=ondra_monitor
+DB_USER=ondra
+DB_PASSWORD=<contraseña_postgres>
+
+# ─── JWT (mínimo 32 caracteres cada secreto, valores distintos entre sí) ─────
+JWT_ACCESS_SECRET=<cadena_aleatoria_minimo_32_caracteres>
+JWT_REFRESH_SECRET=<cadena_aleatoria_diferente_minimo_32_caracteres>
+JWT_ACCESS_EXPIRES_IN=5h
+JWT_REFRESH_EXPIRES_IN=7d
+
+# ─── PRTG ────────────────────────────────────────────────────────────────────
+PRTG_BASE_URL=https://prtg.ondra.local
+# Opción A: API Token (Setup → My Account → API Token)
+PRTG_API_TOKEN=<token>
+# Opción B: usuario + passhash (tiene prioridad si ambos están definidos)
+# PRTG_USERNAME=
+# PRTG_PASSHASH=
+PRTG_REJECT_UNAUTHORIZED=false
+PRTG_SUBGROUPS=Windows Server,Networking,Servers,Backups,Switches,Antenas PTP
+
+# ─── Cookies ─────────────────────────────────────────────────────────────────
+COOKIE_DOMAIN=monitor.ondra.com.ar
+COOKIE_SECURE=true
+```
+
+> **Seguridad:** `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` deben ser cadenas aleatorias únicas
+> de al menos 32 caracteres. Generarlas con:
+> ```powershell
+> node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+> ```
+> El archivo `.env` nunca debe commitearse ni compartirse. Tratarlo con el mismo cuidado que
+> una contraseña de base de datos.
+
+### 4. Instalar dependencias y compilar
+
+```powershell
+cd C:\apps\ondra-monitor\backend
+
+# Solo dependencias de producción
+npm install --omit=dev
+
+# Compilar TypeScript → dist/
+npm run build
+
+# Verificar que el build levanta (Ctrl+C para detener)
+node dist/index.js
+```
+
+### 5. Ejecutar migraciones e inicializar admin
+
+```powershell
+# Migraciones (idempotente — seguro de re-ejecutar en cada actualización)
+npm run db:migrate
+
+# Crear el usuario administrador inicial (solo la primera vez)
+npm run db:seed
+# IMPORTANTE: copiar la contraseña mostrada en consola — no se vuelve a mostrar
+```
+
+### 6. Iniciar con PM2 y configurar servicio de Windows
 
 ```powershell
 # Iniciar la aplicación
 pm2 start dist/index.js --name ondra-monitor-backend
 
-# Guardar la lista de procesos
-pm2 save
-
-# Registrar PM2 como servicio de Windows
-# (se inicia automáticamente con el servidor, sin login de usuario)
-pm2-service-install
-
-# Verificar estado
+# Verificar que está corriendo
 pm2 status
-pm2 logs ondra-monitor-backend
+pm2 logs ondra-monitor-backend --lines 20
+
+# Guardar la lista de procesos activos
+pm2 save
 ```
 
-### 5. (Opcional) Proxy inverso con IIS
-
-Para exponer el backend en HTTPS a través de IIS:
-
-1. Instalar **URL Rewrite** y **Application Request Routing (ARR)** desde el Web Platform Installer de IIS
-2. En IIS Manager → Server level → Application Request Routing → Enable Proxy
-3. Crear un sitio web en IIS y agregar el siguiente `web.config`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<configuration>
-  <system.webServer>
-    <rewrite>
-      <rules>
-        <rule name="API Proxy" stopProcessing="true">
-          <match url="(.*)" />
-          <action type="Rewrite" url="http://localhost:3000/{R:1}" />
-        </rule>
-      </rules>
-    </rewrite>
-  </system.webServer>
-</configuration>
-```
-
-### Comandos de operación
+Para que PM2 arranque automáticamente con Windows (sin necesidad de login de usuario),
+instalar PM2 como servicio de Windows usando NSSM:
 
 ```powershell
-pm2 status                         # Estado de todos los procesos
-pm2 logs ondra-monitor-backend     # Logs en tiempo real
-pm2 restart ondra-monitor-backend  # Reiniciar (tras actualización)
-pm2 stop ondra-monitor-backend     # Detener
-pm2 delete ondra-monitor-backend   # Eliminar del registro de PM2
+# Obtener la ruta del ejecutable pm2
+where pm2
+# Ejemplo: C:\Users\<usuario>\AppData\Roaming\npm\pm2.cmd
+
+# Instalar el servicio (reemplazar la ruta por la real)
+nssm install PM2 "C:\Users\<usuario>\AppData\Roaming\npm\pm2.cmd" "resurrect"
+
+# Configurar el directorio de trabajo
+nssm set PM2 AppDirectory "C:\apps\ondra-monitor\backend"
+
+# Iniciar el servicio
+nssm start PM2
+
+# Verificar estado
+nssm status PM2
+```
+
+> El servicio PM2 lee el estado guardado con `pm2 save` y levanta todos los procesos
+> registrados al iniciar Windows.
+
+### 7. Comandos de operación
+
+```powershell
+pm2 status                          # Estado de todos los procesos
+pm2 logs ondra-monitor-backend      # Logs en tiempo real
+pm2 restart ondra-monitor-backend   # Reiniciar (tras actualización)
+pm2 stop ondra-monitor-backend      # Detener
 ```
 
 ### Proceso de actualización
@@ -223,6 +246,7 @@ pm2 delete ondra-monitor-backend   # Eliminar del registro de PM2
 ```powershell
 # 1. Copiar los nuevos archivos al servidor
 # 2. Instalar dependencias si cambiaron
+cd C:\apps\ondra-monitor\backend
 npm install --omit=dev
 # 3. Recompilar
 npm run build
@@ -276,8 +300,6 @@ pm2 restart ondra-monitor-backend
 
 ## Formato de respuesta
 
-Todas las respuestas siguen la misma estructura:
-
 ```json
 // Éxito
 { "ok": true, "data": { ... }, "meta": { ... } }
@@ -285,28 +307,3 @@ Todas las respuestas siguen la misma estructura:
 // Error
 { "ok": false, "error": "Mensaje descriptivo" }
 ```
-
----
-
-## Variables de entorno de referencia
-
-| Variable                   | Descripción                                 | Prod recomendado        |
-|----------------------------|---------------------------------------------|-------------------------|
-| `PORT`                     | Puerto del servidor                         | `3000`                  |
-| `NODE_ENV`                 | Entorno                                     | `production`            |
-| `CORS_ORIGIN`              | Origen permitido para CORS                  | URL del frontend        |
-| `DB_HOST`                  | Host de PostgreSQL                          | `localhost`             |
-| `DB_PORT`                  | Puerto PostgreSQL                           | `5432`                  |
-| `DB_NAME`                  | Nombre de la base de datos                  | `ondra_monitor`         |
-| `DB_USER`                  | Usuario PostgreSQL                          | `ondra`                 |
-| `DB_PASSWORD`              | Contraseña PostgreSQL                       | —                       |
-| `JWT_ACCESS_SECRET`        | Secreto access tokens (mín. 32 chars)       | Cadena aleatoria fuerte |
-| `JWT_REFRESH_SECRET`       | Secreto refresh tokens (mín. 32 chars)      | Cadena aleatoria fuerte |
-| `JWT_ACCESS_EXPIRES_IN`    | Expiración access token                     | `5h`                    |
-| `JWT_REFRESH_EXPIRES_IN`   | Expiración refresh token                    | `7d`                    |
-| `PRTG_BASE_URL`            | URL base de la API PRTG                     | `https://prtg.host`     |
-| `PRTG_API_TOKEN`           | Token de API de PRTG                        | —                       |
-| `PRTG_REJECT_UNAUTHORIZED` | Validar TLS de PRTG                         | `false` (cert propio)   |
-| `PRTG_SUBGROUPS`           | Subgrupos PRTG a consultar (coma-separados) | —                       |
-| `COOKIE_DOMAIN`            | Dominio de la cookie de sesión              | `monitor.ondra.com.ar`  |
-| `COOKIE_SECURE`            | Cookie solo sobre HTTPS                     | `true`                  |

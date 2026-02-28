@@ -183,7 +183,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   if (record.expira_en && new Date(record.expira_en) < new Date()) return null;
 
   const userResult = await pool.query(
-    `SELECT u.activo, u.debe_cambiar_password, u.rol, u.nombre, c.slug AS cliente_slug
+    `SELECT u.activo, u.debe_cambiar_password, u.rol, u.nombre, c.slug AS cliente_slug, c.activo AS cliente_activo
      FROM usuarios u
      LEFT JOIN clientes c ON u.cliente_id = c.id
      WHERE u.id = $1`,
@@ -191,6 +191,7 @@ export async function refreshAccessToken(refreshToken: string): Promise<{
   );
   const userRow = userResult.rows[0];
   if (!userRow?.activo) return null;
+  if (userRow.cliente_slug && userRow.cliente_activo === false) return null;
 
   // Solo rotar si vence en menos de 24 horas
   const rawPayload = payload as JwtPayload & { exp?: number; iat?: number };
