@@ -93,10 +93,10 @@ El backend corre como servicio de Windows gestionado por **PM2**. PostgreSQL se 
 
 ### Requisitos previos
 
-| Componente | Versión mínima | Instalación |
-|------------|----------------|-------------|
-| Node.js    | 18 LTS         | https://nodejs.org |
-| PM2        | última         | `npm install -g pm2` |
+| Componente | Versión mínima | Instalación                                       |
+| ---------- | -------------- | ------------------------------------------------- |
+| Node.js    | 18 LTS         | https://nodejs.org                                |
+| PM2        | última         | `npm install -g pm2`                              |
 | NSSM       | última         | https://nssm.cc/download (para PM2 como servicio) |
 
 ```powershell
@@ -162,9 +162,11 @@ COOKIE_SECURE=true
 
 > **Seguridad:** `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` deben ser cadenas aleatorias únicas
 > de al menos 32 caracteres. Generarlas con:
+>
 > ```powershell
 > node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 > ```
+>
 > El archivo `.env` nunca debe commitearse ni compartirse. Tratarlo con el mismo cuidado que
 > una contraseña de base de datos.
 
@@ -339,14 +341,14 @@ sin shell de login dedicado para la aplicación:
 
 ```bash
 # Crear usuario del sistema (sin directorio home, sin shell de login)
-sudo useradd --system --no-create-home --shell /bin/false ondra-app
+sudo useradd --system --no-create-home --shell /bin/false monitor-app
 ```
 
 ### 5. Ubicar el código en el servidor
 
 ```bash
 # Crear el directorio de la aplicación
-sudo mkdir -p /opt/ondra-monitor/backend
+sudo mkdir -p /opt/ondra/dashboardViewer-backend
 
 # Copiar el código del repositorio al servidor
 # (desde la máquina de desarrollo, o clonar directamente si hay acceso a git)
@@ -354,13 +356,13 @@ sudo mkdir -p /opt/ondra-monitor/backend
 # scp -r /ruta/local/dashboardViewer-backend/* usuario@servidor:/opt/ondra-monitor/backend/
 
 # Asignar el usuario ondra-app como dueño de los archivos
-sudo chown -R ondra-app:ondra-app /opt/ondra-monitor/backend
+sudo chown -R monitor-app:monitor-app /opt/ondra/dashboardViewer-backend
 ```
 
 ### 6. Crear el archivo `.env` de producción
 
 ```bash
-sudo nano /opt/ondra-monitor/backend/.env
+sudo nano /opt/ondra/dashboardViewer-backend/.env
 ```
 
 Contenido del archivo:
@@ -406,11 +408,11 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 # Ejecutar dos veces — usar valores distintos para ACCESS y REFRESH
 ```
 
-Proteger el archivo para que solo `ondra-app` pueda leerlo:
+Proteger el archivo para que solo `monitor-app` pueda leerlo:
 
 ```bash
-sudo chown ondra-app:ondra-app /opt/ondra-monitor/backend/.env
-sudo chmod 600 /opt/ondra-monitor/backend/.env
+sudo chown monitor-app:monitor-app /opt/ondra/dashboardViewer-backend/.env
+sudo chmod 600 /opt/ondra/dashboardViewer-backend/.env
 ```
 
 ### 7. Instalar dependencias y compilar
@@ -429,7 +431,7 @@ sudo -u ondra-app node dist/index.js
 ```
 
 > Si aparece "Permission denied" al correr npm, verificar que el directorio
-> pertenece a `ondra-app`: `ls -la /opt/ondra-monitor/`
+> pertenece a `monitor-app`: `ls -la /opt/ondra/`
 
 ### 8. Ejecutar migraciones e inicializar admin
 
@@ -463,16 +465,16 @@ After=network.target postgresql.service
 [Service]
 Type=simple
 # El proceso corre con el usuario sin privilegios que creamos
-User=ondra-app
-Group=ondra-app
-WorkingDirectory=/opt/ondra-monitor/backend
+User=ondra
+Group=ondra
+WorkingDirectory=/opt/ondra/dashboardViewer-backend
 # Comando para iniciar la aplicación
 ExecStart=/usr/bin/node dist/index.js
 # Si el proceso muere, systemd lo reinicia automáticamente
 Restart=always
 RestartSec=10
 # Variables de entorno cargadas desde el archivo .env
-EnvironmentFile=/opt/ondra-monitor/backend/.env
+EnvironmentFile=/opt/ondra/dashboardViewer-backend/.env
 # Los logs van a journald (ver con: journalctl -u ondra-monitor)
 StandardOutput=journal
 StandardError=journal
@@ -568,7 +570,7 @@ sudo journalctl -u ondra-monitor -n 20
 ### Autenticación
 
 | Método | Ruta                    | Descripción                          |
-|--------|-------------------------|--------------------------------------|
+| ------ | ----------------------- | ------------------------------------ |
 | POST   | `/auth/login`           | Login con email/contraseña           |
 | POST   | `/auth/refresh`         | Renovar access token                 |
 | POST   | `/auth/logout`          | Cerrar sesión                        |
@@ -577,7 +579,7 @@ sudo journalctl -u ondra-monitor -n 20
 ### Dashboards (requiere auth + acceso al cliente)
 
 | Método | Ruta                                 | Descripción              |
-|--------|--------------------------------------|--------------------------|
+| ------ | ------------------------------------ | ------------------------ |
 | GET    | `/:clientSlug/dashboards`            | Dashboards disponibles   |
 | GET    | `/:clientSlug/dashboards/servers`    | Dashboard VMware         |
 | GET    | `/:clientSlug/dashboards/backups`    | Dashboard Backups        |
@@ -586,20 +588,20 @@ sudo journalctl -u ondra-monitor -n 20
 
 ### Administración (solo admin_ondra)
 
-| Método | Ruta                                 | Descripción                    |
-|--------|--------------------------------------|--------------------------------|
-| GET    | `/admin/clients`                     | Listar clientes                |
-| POST   | `/admin/clients`                     | Crear cliente                  |
-| PATCH  | `/admin/clients/:id`                 | Editar cliente                 |
-| PATCH  | `/admin/clients/:id/status`          | Activar/desactivar cliente     |
-| GET    | `/admin/users`                       | Listar usuarios                |
-| POST   | `/admin/users`                       | Crear usuario (pwd auto)       |
-| PATCH  | `/admin/users/:id/status`            | Activar/desactivar usuario     |
-| POST   | `/admin/users/:id/reset-password`    | Resetear contraseña            |
-| POST   | `/admin/users/:id/revoke-kiosk`      | Revocar sesión kiosk           |
-| GET    | `/admin/logs`                        | Logs con filtros y paginación  |
-| GET    | `/admin/logs/suspicious-ips`         | IPs con intentos fallidos      |
-| GET    | `/admin/logs/export`                 | Exportar logs a CSV            |
+| Método | Ruta                              | Descripción                   |
+| ------ | --------------------------------- | ----------------------------- |
+| GET    | `/admin/clients`                  | Listar clientes               |
+| POST   | `/admin/clients`                  | Crear cliente                 |
+| PATCH  | `/admin/clients/:id`              | Editar cliente                |
+| PATCH  | `/admin/clients/:id/status`       | Activar/desactivar cliente    |
+| GET    | `/admin/users`                    | Listar usuarios               |
+| POST   | `/admin/users`                    | Crear usuario (pwd auto)      |
+| PATCH  | `/admin/users/:id/status`         | Activar/desactivar usuario    |
+| POST   | `/admin/users/:id/reset-password` | Resetear contraseña           |
+| POST   | `/admin/users/:id/revoke-kiosk`   | Revocar sesión kiosk          |
+| GET    | `/admin/logs`                     | Logs con filtros y paginación |
+| GET    | `/admin/logs/suspicious-ips`      | IPs con intentos fallidos     |
+| GET    | `/admin/logs/export`              | Exportar logs a CSV           |
 
 ---
 
