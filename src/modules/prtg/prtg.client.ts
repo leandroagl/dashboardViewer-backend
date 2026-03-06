@@ -61,14 +61,22 @@ const httpsAgent = new https.Agent({
 /**
  * Construye los parámetros de autenticación para la API de PRTG.
  *
- * PRTG autentica mediante API Token, obtenido en:
- *   Setup → My Account → API Token → Agregar nuevo token
- * Se recomienda crear un usuario de solo lectura dedicado al portal
- * y generar el token para ese usuario específico.
+ * Prioridad:
+ *   1. PRTG_USERNAME + PRTG_PASSHASH  → autenticación por usuario/passhash
+ *   2. PRTG_API_TOKEN                 → autenticación por API Token
+ *
+ * El passhash se obtiene desde PRTG en:
+ *   Setup → My Account → My Settings (campo "Passhash")
+ * O via API: GET /api/getpasshash.htm?username=USER&password=PASS
  */
 function buildAuthParams(): URLSearchParams {
   const params = new URLSearchParams();
-  params.set("apitoken", env.prtg.apiToken);
+  if (env.prtg.username && env.prtg.passhash) {
+    params.set("username", env.prtg.username);
+    params.set("passhash", env.prtg.passhash);
+  } else {
+    params.set("apitoken", env.prtg.apiToken);
+  }
   return params;
 }
 
@@ -78,6 +86,7 @@ function buildAuthParams(): URLSearchParams {
 async function prtgGet<T>(
   endpoint: string,
   extraParams: Record<string, string> = {},
+  quiet = false,
 ): Promise<T> {
   const params = buildAuthParams();
   params.set("output", "json");
@@ -118,10 +127,15 @@ async function prtgGet<T>(
   }
 
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    logger.error("PRTG HTTP error", {
-      status: response.status,
-      body:   body.slice(0, 300),
+    const body      = await response.text().catch(() => "");
+    const maskedUrl = url.replace(/apitoken=[^&]+/, "apitoken=***");
+    // 4xx: errores de cliente — recuperables, warn (o debug si quiet=true).
+    // 5xx: errores de servidor — críticos, error siempre.
+    const logFn = response.status >= 500 ? logger.error : quiet ? logger.debug : logger.warn;
+    logFn("PRTG HTTP error", {
+      status:   response.status,
+      endpoint: maskedUrl,
+      body:     body.slice(0, 300),
     });
     throw new Error(`PRTG HTTP ${response.status}: ${body.slice(0, 200)}`);
   }
@@ -142,9 +156,11 @@ async function prtgGet<T>(
  * Los subgrupos a consultar se configuran con PRTG_SUBGROUPS.
  */
 export async function getSensorsByGroup(
-  groupName: string,
+  groupName:   string,
+  extraProbes: string[] = [],
 ): Promise<PrtgSensor[]> {
-  const cacheKey = `prtg:group:${groupName}`;
+  const allProbes = [groupName, ...extraProbes];
+  const cacheKey  = `prtg:group:${allProbes.slice().sort().join(",")}`;
   const cached = getCached<PrtgSensor[]>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -156,7 +172,7 @@ export async function getSensorsByGroup(
         filter_group: sub,
         count:        "2500",
       })
-        .then((r) => (r.sensors ?? []).filter((s) => s.probe === groupName))
+        .then((r) => (r.sensors ?? []).filter((s) => allProbes.includes(s.probe)))
         .catch(() => []),
     ),
   );
@@ -208,11 +224,14 @@ export async function getSensorsByTag(
 export async function getSensorChannels(
   sensorId: number,
 ): Promise<PrtgChannel[]> {
+  // quiet=true: los 400 de sensores que no soportan channels se loguean
+  // en debug (no warn). Se propaga la excepción para que los callers
+  // capturen con .catch(() => null) y usen su lógica de fallback.
   const result = await prtgGet<PrtgChannelResponse>("/api/table.json", {
     output:  "json",
     content: "channels",
     columns: "name,lastvalue,lastvalue_raw",
     id:      String(sensorId),
-  });
+  }, true);
   return result?.channels ?? [];
 }

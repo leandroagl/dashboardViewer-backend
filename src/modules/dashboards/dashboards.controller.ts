@@ -4,8 +4,8 @@
 
 import { Request, Response } from 'express';
 import { sendOk, sendError, sendServerError } from '../../utils/response';
-import { audit, getClientIp } from '../../middleware/auditLogger';
-import { AuditAction, AuditResult, UserRole } from '../../types';
+import { getClientIp } from '../../middleware/auditLogger';
+import { UserRole } from '../../types';
 import { logger } from '../../utils/logger';
 import { getClientBySlug } from '../clients/clients.service';
 import * as DashboardsService from './dashboards.service';
@@ -14,7 +14,7 @@ import * as DashboardsService from './dashboards.service';
  * Verifica que el usuario tenga acceso al slug solicitado y devuelve el prtgGroup.
  * Los admin_ondra pueden acceder a cualquier slug.
  */
-async function resolveClientAccess(req: Request, res: Response): Promise<{ prtgGroup: string; clienteId: string } | null> {
+async function resolveClientAccess(req: Request, res: Response): Promise<{ prtgGroup: string; extraProbes: string[]; clienteId: string } | null> {
   const { clientSlug } = req.params;
 
   const client = await getClientBySlug(clientSlug);
@@ -32,7 +32,11 @@ async function resolveClientAccess(req: Request, res: Response): Promise<{ prtgG
     }
   }
 
-  return { prtgGroup: client.prtg_group, clienteId: client.id };
+  const extraProbes = client.prtg_extra_probes
+    ? client.prtg_extra_probes.split(',').map((p) => p.trim()).filter(Boolean)
+    : [];
+
+  return { prtgGroup: client.prtg_group, extraProbes, clienteId: client.id };
 }
 
 /** GET /:clientSlug/dashboards — Lista los dashboards disponibles */
@@ -41,7 +45,7 @@ export async function getAvailable(req: Request, res: Response): Promise<void> {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
-    const available = await DashboardsService.getAvailableDashboards(access.prtgGroup);
+    const available = await DashboardsService.getAvailableDashboards(access.prtgGroup, access.extraProbes);
     sendOk(res, { dashboards: available });
   } catch (err) {
     logger.error('Error al obtener dashboards disponibles', { error: err });
@@ -56,10 +60,7 @@ export async function getServers(req: Request, res: Response): Promise<void> {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
-    const data = await DashboardsService.getVmwareDashboard(access.prtgGroup);
-
-    await audit({ usuario_id: req.user!.sub, email: req.user!.email, cliente_id: access.clienteId,
-      accion: AuditAction.DASHBOARD_VIEW, dashboard: 'servers', ip_origen: ip, resultado: AuditResult.OK });
+    const data = await DashboardsService.getVmwareDashboard(access.prtgGroup, access.extraProbes);
 
     sendOk(res, data);
   } catch (err) {
@@ -75,10 +76,7 @@ export async function getBackups(req: Request, res: Response): Promise<void> {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
-    const data = await DashboardsService.getBackupsDashboard(access.prtgGroup);
-
-    await audit({ usuario_id: req.user!.sub, email: req.user!.email, cliente_id: access.clienteId,
-      accion: AuditAction.DASHBOARD_VIEW, dashboard: 'backups', ip_origen: ip, resultado: AuditResult.OK });
+    const data = await DashboardsService.getBackupsDashboard(access.prtgGroup, access.extraProbes);
 
     sendOk(res, data);
   } catch (err) {
@@ -94,10 +92,7 @@ export async function getNetworking(req: Request, res: Response): Promise<void> 
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
-    const data = await DashboardsService.getNetworkingDashboard(access.prtgGroup);
-
-    await audit({ usuario_id: req.user!.sub, email: req.user!.email, cliente_id: access.clienteId,
-      accion: AuditAction.DASHBOARD_VIEW, dashboard: 'networking', ip_origen: ip, resultado: AuditResult.OK });
+    const data = await DashboardsService.getNetworkingDashboard(access.prtgGroup, access.extraProbes);
 
     sendOk(res, data);
   } catch (err) {
@@ -113,14 +108,27 @@ export async function getWindows(req: Request, res: Response): Promise<void> {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
-    const data = await DashboardsService.getWindowsDashboard(access.prtgGroup);
-
-    await audit({ usuario_id: req.user!.sub, email: req.user!.email, cliente_id: access.clienteId,
-      accion: AuditAction.DASHBOARD_VIEW, dashboard: 'windows', ip_origen: ip, resultado: AuditResult.OK });
+    const data = await DashboardsService.getWindowsDashboard(access.prtgGroup, access.extraProbes);
 
     sendOk(res, data);
   } catch (err) {
     logger.error('Error en dashboard windows', { error: err });
+    sendServerError(res);
+  }
+}
+
+/** GET /:clientSlug/dashboards/sucursales */
+export async function getSucursales(req: Request, res: Response): Promise<void> {
+  const ip = getClientIp(req);
+  try {
+    const access = await resolveClientAccess(req, res);
+    if (!access) return;
+
+    const data = await DashboardsService.getSucursalesDashboard(access.prtgGroup, access.extraProbes);
+
+    sendOk(res, data);
+  } catch (err) {
+    logger.error('Error en dashboard sucursales', { error: err });
     sendServerError(res);
   }
 }

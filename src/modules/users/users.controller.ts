@@ -7,6 +7,7 @@ import { AuditAction, AuditResult, UserRole } from '../../types';
 import { sendOk, sendError, sendServerError } from '../../utils/response';
 import { logger } from '../../utils/logger';
 import * as UsersService from './users.service';
+import { UserValidationError } from './users.service';
 import { revokeKioskSession } from '../auth/auth.service';
 import { pool } from '../../config/database/pool';
 
@@ -26,7 +27,10 @@ export const updateUserValidators = [
   param('id').isUUID().withMessage('ID inválido.'),
   body('nombre').optional().trim().notEmpty().withMessage('Nombre no puede ser vacío.')
     .isLength({ max: 100 }).withMessage('Nombre demasiado largo (máx. 100 caracteres).'),
+  body('email').optional().isEmail().withMessage('Email inválido.'),
+  body('rol').optional().isIn(Object.values(UserRole)).withMessage('Rol inválido.'),
   body('cliente_id').optional({ nullable: true }).isUUID().withMessage('ID de cliente inválido.'),
+  body('es_kiosk').optional().isBoolean().withMessage('es_kiosk debe ser booleano.'),
 ];
 
 /** GET /admin/users */
@@ -79,6 +83,7 @@ export async function create(req: Request, res: Response): Promise<void> {
     // Devolver la contraseña en texto plano UNA SOLA VEZ
     sendOk(res, { ...user, plainPassword }, undefined, 201);
   } catch (err: unknown) {
+    if (err instanceof UserValidationError) { sendError(res, 400, err.message); return; }
     if ((err as { code?: string }).code === '23505') {
       sendError(res, 409, 'Ya existe un usuario con ese email.');
       return;
@@ -94,7 +99,12 @@ export async function update(req: Request, res: Response): Promise<void> {
     const user = await UsersService.updateUser(req.params.id, req.body);
     if (!user) { sendError(res, 404, 'Usuario no encontrado.'); return; }
     sendOk(res, user);
-  } catch (err) {
+  } catch (err: unknown) {
+    if (err instanceof UserValidationError) { sendError(res, 400, err.message); return; }
+    if ((err as { code?: string }).code === '23505') {
+      sendError(res, 409, 'Ya existe un usuario con ese email.');
+      return;
+    }
     logger.error('Error al actualizar usuario', { error: err });
     sendServerError(res);
   }
@@ -117,6 +127,13 @@ export async function setStatus(req: Request, res: Response): Promise<void> {
   }
 
   try {
+    const target = await UsersService.getUserById(req.params.id);
+    if (!target) { sendError(res, 404, 'Usuario no encontrado.'); return; }
+    if (target.es_superadmin) {
+      sendError(res, 403, 'Este usuario es inmutable y no puede ser modificado.');
+      return;
+    }
+
     const ok = await UsersService.setUserActive(req.params.id, activo);
     if (!ok) { sendError(res, 404, 'Usuario no encontrado.'); return; }
 
@@ -186,6 +203,13 @@ export async function deleteUserHandler(req: Request, res: Response): Promise<vo
     // No permitir auto-eliminación
     if (id === req.user!.sub) {
       sendError(res, 400, 'No podés eliminar tu propio usuario.');
+      return;
+    }
+    // No permitir eliminar al superadmin
+    const target = await UsersService.getUserById(id);
+    if (!target) { sendError(res, 404, 'Usuario no encontrado.'); return; }
+    if (target.es_superadmin) {
+      sendError(res, 403, 'Este usuario es inmutable y no puede ser eliminado.');
       return;
     }
     const result = await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);

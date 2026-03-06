@@ -18,8 +18,9 @@ interface AuditEntry {
 }
 
 /**
- * Registra un evento de auditoría de forma asíncrona (no bloquea la respuesta).
- * Los errores de logging no deben interrumpir el flujo principal.
+ * Registra un evento de auditoría. Debe llamarse con void (fire-and-forget)
+ * DESPUÉS de enviar la respuesta HTTP para no bloquear al cliente.
+ * Los errores de logging no interrumpen el flujo principal.
  */
 export async function audit(entry: AuditEntry): Promise<void> {
   try {

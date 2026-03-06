@@ -58,6 +58,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   resultado   VARCHAR(15) NOT NULL CHECK (resultado IN ('ok', 'error', 'unauthorized'))
 );
 
+-- ─── Columnas agregadas post-creación ────────────────────────────────────────
+ALTER TABLE clientes       ADD COLUMN IF NOT EXISTS prtg_extra_probes TEXT;           -- sondas adicionales, separadas por coma
+ALTER TABLE usuarios       ADD COLUMN IF NOT EXISTS es_superadmin BOOLEAN NOT NULL DEFAULT FALSE;  -- usuario inmutable del sistema
+ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS revocado_en TIMESTAMPTZ;          -- momento de revocación explícita
+
 -- ─── Índices para consultas frecuentes ───────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp    ON audit_logs(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_usuario_id   ON audit_logs(usuario_id);

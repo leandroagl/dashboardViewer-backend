@@ -5,3 +5,4 @@ dist.7z
 .env.test
 *.js.map
 .claude/
+dist.7z

@@ -42,29 +42,31 @@ export async function getClientBySlug(slug: string): Promise<Client | null> {
 // ─── Mutaciones ───────────────────────────────────────────────────────────────
 
 export interface CreateClientInput {
-  nombre:      string;
-  slug:        string;
-  prtg_group:  string;
-  logo_url?:   string;
-  color_marca?: string;
+  nombre:             string;
+  slug:               string;
+  prtg_group:         string;
+  prtg_extra_probes?: string | null;
+  logo_url?:          string;
+  color_marca?:       string;
 }
 
 /** Crea un nuevo cliente */
 export async function createClient(input: CreateClientInput): Promise<Client> {
   const result = await pool.query(
-    `INSERT INTO clientes (nombre, slug, prtg_group, logo_url, color_marca)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO clientes (nombre, slug, prtg_group, prtg_extra_probes, logo_url, color_marca)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [input.nombre, input.slug.toLowerCase(), input.prtg_group, input.logo_url ?? null, input.color_marca ?? null]
+    [input.nombre, input.slug.toLowerCase(), input.prtg_group, input.prtg_extra_probes ?? null, input.logo_url ?? null, input.color_marca ?? null]
   );
   return result.rows[0];
 }
 
 export interface UpdateClientInput {
-  nombre?:      string;
-  prtg_group?:  string;
-  logo_url?:    string | null; // null = eliminar logo
-  color_marca?: string | null; // null = eliminar color
+  nombre?:            string;
+  prtg_group?:        string;
+  prtg_extra_probes?: string | null; // null = eliminar sondas extra
+  logo_url?:          string | null; // null = eliminar logo
+  color_marca?:       string | null; // null = eliminar color
 }
 
 /** Actualiza los campos editables de un cliente. El slug es inmutable. */
@@ -81,6 +83,10 @@ export async function updateClient(id: string, input: UpdateClientInput): Promis
     sets.push(`prtg_group = $${params.length}`);
   }
   // Usar 'in' para distinguir "campo omitido" de "campo seteado a null"
+  if ('prtg_extra_probes' in input) {
+    params.push(input.prtg_extra_probes ?? null);
+    sets.push(`prtg_extra_probes = $${params.length}`);
+  }
   if ('logo_url' in input) {
     params.push(input.logo_url ?? null);
     sets.push(`logo_url = $${params.length}`);

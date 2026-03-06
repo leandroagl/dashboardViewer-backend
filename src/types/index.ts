@@ -37,14 +37,15 @@ export enum AuditResult {
 // ─── Entidades de dominio ────────────────────────────────────────────────────
 
 export interface Client {
-  id:          string;
-  nombre:      string;
-  slug:        string;           // Identificador inmutable usado para filtrar en PRTG
-  prtg_group:  string;           // Nombre exacto del grupo raíz en PRTG
-  activo:      boolean;
-  logo_url?:   string;
-  color_marca?: string;
-  creado_en:   Date;
+  id:                 string;
+  nombre:             string;
+  slug:               string;           // Identificador inmutable usado para filtrar en PRTG
+  prtg_group:         string;           // Nombre exacto del grupo raíz en PRTG (sonda principal)
+  prtg_extra_probes?: string | null;    // Sondas adicionales separadas por coma, ej: "Velia,OtraSonda"
+  activo:             boolean;
+  logo_url?:          string;
+  color_marca?:       string;
+  creado_en:          Date;
 }
 
 export interface User {
@@ -57,6 +58,7 @@ export interface User {
   activo:                boolean;
   debe_cambiar_password: boolean;
   es_kiosk:              boolean;
+  es_superadmin:         boolean;        // Usuario inmutable del sistema (seed)
   ultimo_acceso?:        Date;
   creado_por?:           string;
   creado_en:             Date;
