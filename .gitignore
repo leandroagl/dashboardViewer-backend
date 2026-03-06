@@ -3,3 +3,4 @@ dist/
 .env
 *.js.map
 .claude/
+dist.7z
