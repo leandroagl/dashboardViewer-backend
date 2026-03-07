@@ -60,9 +60,10 @@ export async function login(req: Request, res: Response): Promise<void> {
   const ip = getClientIp(req);
 
   try {
-    const result = await AuthService.loginUser(email, password);
+    const outcome = await AuthService.loginUser(email, password);
 
-    if (!result) {
+    if (!outcome) {
+      // Usuario inactivo o cliente inactivo
       sendError(res, 401, "Email o contraseña incorrectos.");
       void audit({
         email,
@@ -72,6 +73,31 @@ export async function login(req: Request, res: Response): Promise<void> {
       });
       return;
     }
+
+    if (outcome.status === 'locked') {
+      sendError(res, 423, "Cuenta bloqueada temporalmente por múltiples intentos fallidos.");
+      void audit({
+        email,
+        accion: AuditAction.LOGIN_FAILED,
+        ip_origen: ip,
+        resultado: AuditResult.UNAUTHORIZED,
+      });
+      return;
+    }
+
+    if (outcome.status === 'wrong') {
+      sendError(res, 401, "Email o contraseña incorrectos.");
+      void audit({
+        email,
+        accion: AuditAction.LOGIN_FAILED,
+        ip_origen: ip,
+        resultado: AuditResult.UNAUTHORIZED,
+      });
+      return;
+    }
+
+    // outcome.status === 'ok'
+    const result = outcome.data;
 
     // Almacenar refresh token en cookie HttpOnly
     setRefreshCookie(res, result.refreshToken, result.refreshExpiry);

@@ -76,37 +76,94 @@ async function storeRefreshToken(
 // Se computa sincrónicamente una sola vez en startup (~200ms con cost 12).
 const DUMMY_HASH = bcrypt.hashSync('__dummy_never_used__', 12);
 
-export interface LoginResult {
-  accessToken: string;
-  refreshToken: string;
-  refreshExpiry: Date | null;
-  mustChangePassword: boolean;
-  nombre: string;
-  rol: UserRole;
-  clienteSlug: string | null;
+export interface LoginSuccess {
+  accessToken:           string;
+  refreshToken:          string;
+  refreshExpiry:         Date | null;
+  mustChangePassword:    boolean;
+  nombre:                string;
+  rol:                   UserRole;
+  clienteSlug:           string | null;
   dashboardsDisponibles: string[];
+}
+
+export type LoginOutcome =
+  | { status: 'ok';     data: LoginSuccess }
+  | { status: 'locked'; bloqueado_hasta: Date }
+  | { status: 'wrong';  intentos_restantes: number | null }
+  | null;  // usuario inactivo o cliente inactivo
+
+function lockoutDurationMs(cantidadBloqueos: number): number {
+  if (cantidadBloqueos === 0) return  5 * 60 * 1000;  // 5 min
+  if (cantidadBloqueos === 1) return 15 * 60 * 1000;  // 15 min
+  return                             60 * 60 * 1000;   // 1 h
 }
 
 export async function loginUser(
   email: string,
   password: string,
-): Promise<LoginResult | null> {
+): Promise<LoginOutcome> {
   const result = await pool.query(
     `SELECT u.*, c.slug as cliente_slug
      FROM usuarios u
      LEFT JOIN clientes c ON u.cliente_id = c.id
-     WHERE u.email = $1 AND u.activo = TRUE`,
+     WHERE u.email = $1`,
     [email.toLowerCase().trim()],
   );
 
-  const user = result.rows[0];
+  const userRow = result.rows[0];
 
-  // Siempre ejecutar bcrypt aunque el usuario no exista, para evitar
-  // timing attacks que permitan enumerar usuarios registrados.
+  // Usuario inactivo: retornar null sin revelar si existe
+  if (userRow && !userRow.activo) {
+    await bcrypt.compare(password, DUMMY_HASH); // mantener timing uniforme
+    return null;
+  }
+
+  const user = userRow;
+
+  // Chequear bloqueo ANTES de bcrypt (evitar costo innecesario)
+  if (user && user.bloqueado_hasta && new Date(user.bloqueado_hasta) > new Date()) {
+    return { status: 'locked', bloqueado_hasta: new Date(user.bloqueado_hasta) };
+  }
+
+  // Siempre ejecutar bcrypt aunque el usuario no exista (anti timing-attack)
   const isValid = await bcrypt.compare(password, user?.password_hash ?? DUMMY_HASH);
 
-  if (!user || !isValid) return null;
+  if (!user || !isValid) {
+    // Rastrear intentos solo para usuarios existentes
+    if (user) {
+      const nuevoIntentos = (user.intentos_fallidos ?? 0) + 1;
 
+      if (nuevoIntentos >= 10) {
+        const durMs      = lockoutDurationMs(user.cantidad_bloqueos ?? 0);
+        const bloqueadoHasta = new Date(Date.now() + durMs);
+        await pool.query(
+          `UPDATE usuarios
+           SET intentos_fallidos = 0,
+               bloqueado_hasta   = $1,
+               cantidad_bloqueos = cantidad_bloqueos + 1
+           WHERE id = $2`,
+          [bloqueadoHasta, user.id],
+        );
+        return { status: 'locked', bloqueado_hasta: bloqueadoHasta };
+      }
+
+      await pool.query(
+        `UPDATE usuarios SET intentos_fallidos = $1 WHERE id = $2`,
+        [nuevoIntentos, user.id],
+      );
+      // Informar restantes solo cuando quedan ≤5
+      const restantes = 10 - nuevoIntentos;
+      return {
+        status: 'wrong',
+        intentos_restantes: restantes < 5 ? restantes : null,
+      };
+    }
+
+    return { status: 'wrong', intentos_restantes: null };
+  }
+
+  // Credenciales válidas — verificar cliente activo
   if (user.cliente_id) {
     const clientResult = await pool.query(
       `SELECT activo FROM clientes WHERE id = $1`,
@@ -114,6 +171,12 @@ export async function loginUser(
     );
     if (!clientResult.rows[0]?.activo) return null;
   }
+
+  // Resetear intentos en login exitoso (cantidad_bloqueos NO se resetea)
+  await pool.query(
+    `UPDATE usuarios SET intentos_fallidos = 0, bloqueado_hasta = NULL WHERE id = $1`,
+    [user.id],
+  );
 
   const payload: JwtPayload = {
     sub:        user.id,
@@ -129,20 +192,20 @@ export async function loginUser(
   );
 
   await storeRefreshToken(user.id, refreshToken, refreshExpiry);
-
-  await pool.query(`UPDATE usuarios SET ultimo_acceso = NOW() WHERE id = $1`, [
-    user.id,
-  ]);
+  await pool.query(`UPDATE usuarios SET ultimo_acceso = NOW() WHERE id = $1`, [user.id]);
 
   return {
-    accessToken,
-    refreshToken,
-    refreshExpiry,
-    mustChangePassword:    user.debe_cambiar_password,
-    nombre:                user.nombre as string,
-    rol:                   user.rol as UserRole,
-    clienteSlug:           user.cliente_slug ?? null,
-    dashboardsDisponibles: [],
+    status: 'ok',
+    data: {
+      accessToken,
+      refreshToken,
+      refreshExpiry,
+      mustChangePassword:    user.debe_cambiar_password,
+      nombre:                user.nombre as string,
+      rol:                   user.rol as UserRole,
+      clienteSlug:           user.cliente_slug ?? null,
+      dashboardsDisponibles: [],
+    },
   };
 }
 
