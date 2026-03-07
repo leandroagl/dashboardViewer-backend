@@ -196,6 +196,22 @@ export async function revokeKiosk(req: Request, res: Response): Promise<void> {
   }
 }
 
+/** POST /admin/users/:id/unlock */
+export async function unlock(req: Request, res: Response): Promise<void> {
+  const { id } = req.params;
+  try {
+    const user = await UsersService.unlockUser(id);
+    if (!user) {
+      sendError(res, 404, 'Usuario no encontrado.');
+      return;
+    }
+    sendOk(res, user);
+  } catch (err) {
+    logger.error('Error al desbloquear usuario', { error: err });
+    sendServerError(res);
+  }
+}
+
 export async function deleteUserHandler(req: Request, res: Response): Promise<void> {
   const ip = getClientIp(req);
   try {

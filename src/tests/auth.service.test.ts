@@ -70,25 +70,27 @@ describe('loginUser', () => {
     const result = await loginUser(email, password);
 
     expect(result).not.toBeNull();
-    expect(result!.accessToken).toBeTruthy();
-    expect(result!.refreshToken).toBeTruthy();
-    expect(result!.rol).toBe('admin_ondra');
-    expect(result!.clienteSlug).toBeNull();
-    expect(result!.mustChangePassword).toBe(false);
+    expect((result as any).status).toBe('ok');
+    expect((result as any).data.accessToken).toBeTruthy();
+    expect((result as any).data.refreshToken).toBeTruthy();
+    expect((result as any).data.rol).toBe('admin_ondra');
+    expect((result as any).data.clienteSlug).toBeNull();
+    expect((result as any).data.mustChangePassword).toBe(false);
   });
 
-  test('retorna null con contraseña incorrecta', async () => {
+  test('retorna wrong con contraseña incorrecta', async () => {
     const { email } = await crearUsuario();
 
     const result = await loginUser(email, 'contraseña_incorrecta');
 
-    expect(result).toBeNull();
+    expect((result as any)?.status).toBe('wrong');
   });
 
-  test('retorna null si el usuario no existe', async () => {
+  test('retorna wrong si el usuario no existe', async () => {
     const result = await loginUser('noexiste@ondra.com.ar', 'cualquier');
 
-    expect(result).toBeNull();
+    expect((result as any)?.status).toBe('wrong');
+    expect((result as any)?.intentos_restantes).toBeNull();
   });
 
   test('retorna null si el usuario está inactivo', async () => {
@@ -104,7 +106,7 @@ describe('loginUser', () => {
 
     const result = await loginUser('TEST@ONDRA.COM.AR', password);
 
-    expect(result).not.toBeNull();
+    expect((result as any)?.status).toBe('ok');
   });
 
   test('guarda el refresh token en la DB', async () => {
@@ -124,7 +126,7 @@ describe('logoutUser', () => {
     const { email, password } = await crearUsuario();
     const login = await loginUser(email, password);
 
-    await logoutUser(login!.refreshToken);
+    await logoutUser((login as any).data.refreshToken);
 
     const token = await testPool.query(
       `SELECT revocado, revocado_en FROM refresh_tokens WHERE revocado = TRUE`,
@@ -145,7 +147,7 @@ describe('refreshAccessToken', () => {
     const { email, password } = await crearUsuario();
     const login = await loginUser(email, password);
 
-    const result = await refreshAccessToken(login!.refreshToken);
+    const result = await refreshAccessToken((login as any).data.refreshToken);
 
     expect(result).not.toBeNull();
     expect(result!.accessToken).toBeTruthy();
@@ -154,9 +156,9 @@ describe('refreshAccessToken', () => {
   test('retorna null con token revocado', async () => {
     const { email, password } = await crearUsuario();
     const login = await loginUser(email, password);
-    await logoutUser(login!.refreshToken);
+    await logoutUser((login as any).data.refreshToken);
 
-    const result = await refreshAccessToken(login!.refreshToken);
+    const result = await refreshAccessToken((login as any).data.refreshToken);
 
     expect(result).toBeNull();
   });
@@ -210,6 +212,6 @@ describe('changePassword', () => {
     await changePassword(id, password, 'NuevaPass123!');
     const loginResult = await loginUser(email, 'NuevaPass123!');
 
-    expect(loginResult).not.toBeNull();
+    expect((loginResult as any)?.status).toBe('ok');
   });
 });

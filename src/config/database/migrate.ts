@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 ALTER TABLE clientes       ADD COLUMN IF NOT EXISTS prtg_extra_probes TEXT;           -- sondas adicionales, separadas por coma
 ALTER TABLE usuarios       ADD COLUMN IF NOT EXISTS es_superadmin BOOLEAN NOT NULL DEFAULT FALSE;  -- usuario inmutable del sistema
 ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS revocado_en TIMESTAMPTZ;          -- momento de revocación explícita
+ALTER TABLE usuarios       ADD COLUMN IF NOT EXISTS intentos_fallidos  INTEGER     NOT NULL DEFAULT 0;
+ALTER TABLE usuarios       ADD COLUMN IF NOT EXISTS bloqueado_hasta     TIMESTAMPTZ NULL;
+ALTER TABLE usuarios       ADD COLUMN IF NOT EXISTS cantidad_bloqueos   INTEGER     NOT NULL DEFAULT 0;
 
 -- ─── Índices para consultas frecuentes ───────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp    ON audit_logs(timestamp DESC);

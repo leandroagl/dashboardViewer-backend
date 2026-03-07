@@ -60,9 +60,10 @@ export async function login(req: Request, res: Response): Promise<void> {
   const ip = getClientIp(req);
 
   try {
-    const result = await AuthService.loginUser(email, password);
+    const outcome = await AuthService.loginUser(email, password);
 
-    if (!result) {
+    if (!outcome) {
+      // Usuario inactivo o cliente inactivo
       sendError(res, 401, "Email o contraseña incorrectos.");
       void audit({
         email,
@@ -72,6 +73,33 @@ export async function login(req: Request, res: Response): Promise<void> {
       });
       return;
     }
+
+    // Cuenta bloqueada
+    if (outcome.status === 'locked') {
+      res.status(423).json({
+        ok: false,
+        error: 'Cuenta bloqueada temporalmente.',
+        bloqueado_hasta: outcome.bloqueado_hasta.toISOString(),
+      });
+      void audit({ email, accion: AuditAction.LOGIN_FAILED, ip_origen: ip, resultado: AuditResult.UNAUTHORIZED });
+      return;
+    }
+
+    // Credenciales incorrectas
+    if (outcome.status === 'wrong') {
+      res.status(401).json({
+        ok: false,
+        error: 'Email o contraseña incorrectos.',
+        ...(outcome.intentos_restantes !== null
+          ? { intentos_restantes: outcome.intentos_restantes }
+          : {}),
+      });
+      void audit({ email, accion: AuditAction.LOGIN_FAILED, ip_origen: ip, resultado: AuditResult.UNAUTHORIZED });
+      return;
+    }
+
+    // outcome.status === 'ok'
+    const result = outcome.data;
 
     // Almacenar refresh token en cookie HttpOnly
     setRefreshCookie(res, result.refreshToken, result.refreshExpiry);

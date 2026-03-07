@@ -62,6 +62,9 @@ export interface User {
   ultimo_acceso?:        Date;
   creado_por?:           string;
   creado_en:             Date;
+  intentos_fallidos?:    number;
+  bloqueado_hasta?:      Date | null;
+  cantidad_bloqueos?:    number;
 }
 
 export interface AuditLog {
