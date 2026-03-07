@@ -74,25 +74,27 @@ export async function login(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    // Cuenta bloqueada
     if (outcome.status === 'locked') {
-      sendError(res, 423, "Cuenta bloqueada temporalmente por múltiples intentos fallidos.");
-      void audit({
-        email,
-        accion: AuditAction.LOGIN_FAILED,
-        ip_origen: ip,
-        resultado: AuditResult.UNAUTHORIZED,
+      res.status(423).json({
+        ok: false,
+        error: 'Cuenta bloqueada temporalmente.',
+        bloqueado_hasta: outcome.bloqueado_hasta.toISOString(),
       });
+      void audit({ email, accion: AuditAction.LOGIN_FAILED, ip_origen: ip, resultado: AuditResult.UNAUTHORIZED });
       return;
     }
 
+    // Credenciales incorrectas
     if (outcome.status === 'wrong') {
-      sendError(res, 401, "Email o contraseña incorrectos.");
-      void audit({
-        email,
-        accion: AuditAction.LOGIN_FAILED,
-        ip_origen: ip,
-        resultado: AuditResult.UNAUTHORIZED,
+      res.status(401).json({
+        ok: false,
+        error: 'Email o contraseña incorrectos.',
+        ...(outcome.intentos_restantes !== null
+          ? { intentos_restantes: outcome.intentos_restantes }
+          : {}),
       });
+      void audit({ email, accion: AuditAction.LOGIN_FAILED, ip_origen: ip, resultado: AuditResult.UNAUTHORIZED });
       return;
     }
 
