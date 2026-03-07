@@ -54,6 +54,9 @@ describe('schema: tabla usuarios', () => {
     expect(columns).toContain('es_kiosk');
     expect(columns).toContain('es_superadmin');
     expect(columns).toContain('ultimo_acceso');
+    expect(columns).toContain('intentos_fallidos');
+    expect(columns).toContain('bloqueado_hasta');
+    expect(columns).toContain('cantidad_bloqueos');
   });
 });
 
