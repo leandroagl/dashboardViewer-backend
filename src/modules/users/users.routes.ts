@@ -16,6 +16,7 @@ router.patch('/:id',                    UsersController.updateUserValidators, va
 router.patch('/:id/status',             UsersController.idParamValidator, validate, UsersController.setStatus);
 router.post('/:id/reset-password',      UsersController.idParamValidator, validate, UsersController.resetPassword);
 router.post('/:id/revoke-kiosk',        UsersController.idParamValidator, validate, UsersController.revokeKiosk);
+router.post('/:id/unlock',              UsersController.idParamValidator, validate, UsersController.unlock);
 router.delete('/:id',                   UsersController.idParamValidator, validate, UsersController.deleteUserHandler);
 
 export default router;
