@@ -1,6 +1,8 @@
 node_modules/
 dist/
+dist.7z
 .env
+.env.test
 *.js.map
 .claude/
 dist.7z
