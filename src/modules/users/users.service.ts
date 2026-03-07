@@ -52,6 +52,7 @@ export async function getAllUsers(filters: {
     `SELECT
        u.id, u.email, u.nombre, u.rol, u.cliente_id,
        u.activo, u.debe_cambiar_password, u.es_kiosk, u.es_superadmin,
+       u.intentos_fallidos, u.bloqueado_hasta, u.cantidad_bloqueos,
        u.ultimo_acceso, u.creado_por, u.creado_en,
        c.nombre AS cliente_nombre
      FROM usuarios u
@@ -67,6 +68,7 @@ export async function getUserById(id: string): Promise<Omit<User, 'password_hash
   const result = await pool.query(
     `SELECT u.id, u.email, u.nombre, u.rol, u.cliente_id,
             u.activo, u.debe_cambiar_password, u.es_kiosk, u.es_superadmin,
+            u.intentos_fallidos, u.bloqueado_hasta, u.cantidad_bloqueos,
             u.ultimo_acceso, u.creado_por, u.creado_en
      FROM usuarios u WHERE u.id = $1`,
     [id]
@@ -225,4 +227,21 @@ export async function resetPassword(id: string): Promise<string | null> {
   }
 
   return plainPassword;
+}
+
+/** Desbloquea manualmente una cuenta: resetea intentos, bloqueo y cantidad de bloqueos. */
+export async function unlockUser(id: string): Promise<Omit<User, 'password_hash'> | null> {
+  const result = await pool.query(
+    `UPDATE usuarios
+     SET intentos_fallidos = 0,
+         bloqueado_hasta   = NULL,
+         cantidad_bloqueos = 0
+     WHERE id = $1
+     RETURNING id, email, nombre, rol, cliente_id, activo,
+               debe_cambiar_password, es_kiosk, es_superadmin,
+               intentos_fallidos, bloqueado_hasta, cantidad_bloqueos,
+               ultimo_acceso, creado_por, creado_en`,
+    [id],
+  );
+  return result.rows[0] ?? null;
 }
