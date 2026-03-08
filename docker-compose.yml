@@ -1,13 +1,31 @@
 services:
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ondra
+
   backend:
     build: .
     restart: unless-stopped
     env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - ondra
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # acceso a PostgreSQL en el host
 
   frontend:
     build: ../dashboardViewer-frontend
@@ -25,3 +43,6 @@ services:
 networks:
   ondra:
     driver: bridge
+
+volumes:
+  postgres_data:

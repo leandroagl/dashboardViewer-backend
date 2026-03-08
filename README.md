@@ -87,105 +87,106 @@ npm run dev   # ts-node-dev con hot reload en http://localhost:3000
 
 ---
 
-## Despliegue en Linux (Ubuntu 22.04 / Debian 12)
+## Despliegue en Ubuntu Server con Docker
 
-En Linux el proceso Node.js se gestiona con **systemd**, que viene incluido en el sistema
-operativo. No es necesario instalar PM2 ni NSSM — systemd se encarga de arrancar el servicio
-automáticamente con el sistema y de reiniciarlo si cae.
+El sistema completo (backend + frontend + PostgreSQL) corre como contenedores Docker
+orquestados con Docker Compose. El archivo `docker-compose.yml` se encuentra en este
+repositorio (`dashboardViewer-backend/`).
 
-### 1. Instalar Node.js 18
-
-Ubuntu y Debian no incluyen Node.js 18 en sus repositorios base. Se instala desde el
-repositorio oficial de NodeSource:
+### 1. Preparar el servidor Ubuntu
 
 ```bash
-# Agregar el repositorio de Node.js 18
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+# Actualizar el sistema
+sudo apt update && sudo apt upgrade -y
 
-# Instalar Node.js (incluye npm)
-sudo apt install -y nodejs
-
-# Verificar versiones
-node --version   # debe mostrar v18.x.x
-npm --version
+# Instalar dependencias necesarias para agregar repositorios externos
+sudo apt install -y ca-certificates curl gnupg
 ```
 
-### 2. Instalar PostgreSQL
+### 2. Instalar Docker Engine
+
+Ubuntu no incluye Docker en sus repositorios base. Se instala desde el repositorio oficial:
 
 ```bash
-sudo apt install -y postgresql postgresql-contrib
+# Agregar la clave GPG oficial de Docker
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
-# Verificar que el servicio está corriendo
-sudo systemctl status postgresql
+# Agregar el repositorio de Docker
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+  | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Instalar Docker Engine y Docker Compose
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Verificar instalación
+docker --version
+docker compose version
 ```
 
-### 3. Crear el usuario y base de datos PostgreSQL
-
-PostgreSQL en Linux usa autenticación por sistema operativo para el usuario `postgres`.
-Hay que entrar con ese usuario para ejecutar comandos SQL:
+Agregar el usuario actual al grupo `docker` para no necesitar `sudo` en cada comando:
 
 ```bash
-# Entrar al cliente psql como superusuario de postgres
-sudo -u postgres psql
+sudo usermod -aG docker $USER
+# Cerrar sesión y volver a entrar para que el cambio de grupo tome efecto
 ```
 
-Dentro de psql, ejecutar:
+### 3. Obtener el certificado SSL (Let's Encrypt)
 
-```sql
--- Crear el usuario de la aplicación
-CREATE USER ondra WITH PASSWORD 'contraseña_segura';
-
--- Crear la base de datos
-CREATE DATABASE ondra_monitor OWNER ondra;
-
--- Otorgar todos los permisos
-GRANT ALL PRIVILEGES ON DATABASE ondra_monitor TO ondra;
-
--- Salir de psql
-\q
-```
-
-Verificar que la conexión funciona:
+El contenedor nginx monta `/etc/letsencrypt` del host para servir HTTPS en el puerto 7695.
+Certbot debe correr **antes** del primer `docker compose up` porque el puerto 80 tiene que
+estar libre para el challenge HTTP:
 
 ```bash
-# Intentar conectarse con el usuario recién creado
-psql -U ondra -d ondra_monitor -h localhost -c "SELECT 1;"
-# Debe mostrar: ?column? = 1
+sudo apt install -y certbot
+
+# Obtener el certificado (reemplazar con el dominio real)
+sudo certbot certonly --standalone -d monitor.ondra.com.ar
+
+# Verificar que los archivos existen
+sudo ls /etc/letsencrypt/live/monitor.ondra.com.ar/
+# Debe listar: cert.pem  chain.pem  fullchain.pem  privkey.pem
 ```
 
-> Si da error de autenticación, editar `/etc/postgresql/<versión>/main/pg_hba.conf`
-> y cambiar el método de autenticación para `localhost` de `peer` a `md5`, luego
-> reiniciar PostgreSQL: `sudo systemctl restart postgresql`
+> **Renovación automática:** certbot instala un timer de systemd que renueva el
+> certificado automáticamente antes de que expire. Verificar con:
+> `sudo systemctl status certbot.timer`
+>
+> Tras la renovación es necesario recargar nginx: agregar un deploy hook en
+> `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`:
+> ```bash
+> #!/bin/sh
+> docker compose -f /opt/ondra/dashboardViewer-backend/docker-compose.yml \
+>   exec frontend nginx -s reload
+> ```
+> ```bash
+> sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+> ```
 
-### 4. Crear usuario del sistema para correr la aplicación
-
-Por seguridad, el proceso Node.js no debe correr como `root`. Se crea un usuario del sistema
-sin shell de login dedicado para la aplicación:
+### 4. Clonar los repositorios
 
 ```bash
-# Crear usuario del sistema (sin directorio home, sin shell de login)
-sudo useradd --system --no-create-home --shell /bin/false monitor-app
+sudo mkdir -p /opt/ondra
+cd /opt/ondra
+
+# Clonar ambos repositorios (el docker-compose del backend referencia al frontend por ruta relativa)
+sudo git clone <url-repo-backend> dashboardViewer-backend
+sudo git clone <url-repo-frontend> dashboardViewer-frontend
+
+# Asignar permisos al usuario actual
+sudo chown -R $USER:$USER /opt/ondra
 ```
 
-### 5. Ubicar el código en el servidor
+### 5. Crear el archivo `.env`
 
 ```bash
-# Crear el directorio de la aplicación
-sudo mkdir -p /opt/ondra/dashboardViewer-backend
-
-# Copiar el código del repositorio al servidor
-# (desde la máquina de desarrollo, o clonar directamente si hay acceso a git)
-# Ejemplo con scp desde la máquina de desarrollo:
-# scp -r /ruta/local/dashboardViewer-backend/* usuario@servidor:/opt/ondra-monitor/backend/
-
-# Asignar el usuario ondra-app como dueño de los archivos
-sudo chown -R monitor-app:monitor-app /opt/ondra/dashboardViewer-backend
-```
-
-### 6. Crear el archivo `.env` de producción
-
-```bash
-sudo nano /opt/ondra/dashboardViewer-backend/.env
+cp /opt/ondra/dashboardViewer-backend/.env.example /opt/ondra/dashboardViewer-backend/.env
+nano /opt/ondra/dashboardViewer-backend/.env
 ```
 
 Contenido del archivo:
@@ -194,14 +195,14 @@ Contenido del archivo:
 # ─── Servidor ────────────────────────────────────────────────────────────────
 PORT=3000
 NODE_ENV=production
-CORS_ORIGIN=https://monitor.ondra.com.ar
+CORS_ORIGIN=https://monitor.ondra.com.ar:7695
 
-# ─── Base de datos ───────────────────────────────────────────────────────────
-DB_HOST=localhost
+# ─── Base de datos (nombre del servicio en docker-compose) ───────────────────
+DB_HOST=postgres
 DB_PORT=5432
 DB_NAME=ondra_monitor
 DB_USER=ondra
-DB_PASSWORD=<contraseña_postgres>
+DB_PASSWORD=<contraseña_segura_para_postgres>
 
 # ─── JWT (mínimo 32 caracteres cada secreto, valores distintos entre sí) ─────
 JWT_ACCESS_SECRET=<cadena_aleatoria_minimo_32_caracteres>
@@ -210,7 +211,7 @@ JWT_ACCESS_EXPIRES_IN=5h
 JWT_REFRESH_EXPIRES_IN=7d
 
 # ─── PRTG ────────────────────────────────────────────────────────────────────
-PRTG_BASE_URL=https://prtg.ondra.local
+PRTG_BASE_URL=https://<ip-o-hostname-prtg>
 # Opción A: API Token (Setup → My Account → API Token)
 PRTG_API_TOKEN=<token>
 # Opción B: usuario + passhash (tiene prioridad si ambos están definidos)
@@ -231,159 +232,104 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 # Ejecutar dos veces — usar valores distintos para ACCESS y REFRESH
 ```
 
-Proteger el archivo para que solo `monitor-app` pueda leerlo:
+Proteger el archivo `.env`:
 
 ```bash
-sudo chown monitor-app:monitor-app /opt/ondra/dashboardViewer-backend/.env
-sudo chmod 600 /opt/ondra/dashboardViewer-backend/.env
+chmod 600 /opt/ondra/dashboardViewer-backend/.env
 ```
 
-### 7. Instalar dependencias y compilar
+### 6. Levantar los contenedores
 
 ```bash
-cd /opt/ondra-monitor/backend
+cd /opt/ondra/dashboardViewer-backend
 
-# Instalar dependencias (como el usuario ondra-app para mantener permisos)
-sudo -u ondra-app npm install
-
-# Compilar TypeScript → dist/
-sudo -u ondra-app npm run build
-
-# Verificar que el build levanta correctamente (Ctrl+C para detener)
-sudo -u ondra-app node dist/index.js
+# Construir las imágenes y levantar en segundo plano
+docker compose up -d --build
 ```
 
-> Si aparece "Permission denied" al correr npm, verificar que el directorio
-> pertenece a `monitor-app`: `ls -la /opt/ondra/`
+Docker Compose:
+1. Levanta PostgreSQL y espera a que esté saludable (`healthcheck`)
+2. Levanta el backend — el `entrypoint.sh` ejecuta las migraciones automáticamente
+3. Levanta el frontend (nginx con el build de Angular)
 
-### 8. Ejecutar migraciones e inicializar admin
+Verificar que todos los contenedores están corriendo:
 
 ```bash
-cd /opt/ondra-monitor/backend
+docker compose ps
+# Los tres servicios deben mostrar estado "running" (o "healthy")
+```
 
-# Crear las tablas en la base de datos (idempotente — seguro de re-ejecutar)
-sudo -u ondra-app npm run db:migrate
+### 7. Inicializar el administrador (solo la primera vez)
 
-# Crear el usuario administrador inicial (solo la primera vez)
-sudo -u ondra-app npm run db:seed
+```bash
+docker compose exec backend node dist/config/database/seed.js
 # ¡IMPORTANTE! Copiar la contraseña mostrada en consola — no se vuelve a mostrar
 ```
 
-### 9. Crear el servicio systemd
-
-systemd es el gestor de servicios de Linux. Crear el archivo de servicio:
+### 8. Verificar el deploy
 
 ```bash
-sudo nano /etc/systemd/system/ondra-monitor.service
+# Comprobar que el backend responde
+curl http://localhost:3000/health
+
+# Ver los logs de todos los servicios
+docker compose logs -f
+
+# Ver logs de un servicio específico
+docker compose logs -f backend
+docker compose logs -f frontend
+docker compose logs -f postgres
 ```
 
-Contenido exacto del archivo:
+El portal debe ser accesible en `https://monitor.ondra.com.ar:7695`.
 
-```ini
-[Unit]
-Description=ONDRA Monitor — Backend API
-# El servicio arranca después de que la red y PostgreSQL estén listos
-After=network.target postgresql.service
+---
 
-[Service]
-Type=simple
-# El proceso corre con el usuario sin privilegios que creamos
-User=ondra
-Group=ondra
-WorkingDirectory=/opt/ondra/dashboardViewer-backend
-# Comando para iniciar la aplicación
-ExecStart=/usr/bin/node dist/index.js
-# Si el proceso muere, systemd lo reinicia automáticamente
-Restart=always
-RestartSec=10
-# Variables de entorno cargadas desde el archivo .env
-EnvironmentFile=/opt/ondra/dashboardViewer-backend/.env
-# Los logs van a journald (ver con: journalctl -u ondra-monitor)
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=ondra-monitor
-
-[Install]
-# El servicio se activa en el target normal del sistema (arranque estándar)
-WantedBy=multi-user.target
-```
-
-### 10. Habilitar y arrancar el servicio
+### Comandos de operación diaria
 
 ```bash
-# Recargar la lista de servicios de systemd (necesario tras crear/editar un .service)
-sudo systemctl daemon-reload
+cd /opt/ondra/dashboardViewer-backend
 
-# Habilitar el servicio: se iniciará automáticamente al arrancar el servidor
-sudo systemctl enable ondra-monitor
+# Estado de todos los contenedores
+docker compose ps
 
-# Iniciar el servicio ahora
-sudo systemctl start ondra-monitor
+# Logs en tiempo real
+docker compose logs -f
 
-# Verificar que está corriendo correctamente
-sudo systemctl status ondra-monitor
+# Reiniciar un servicio
+docker compose restart backend
+
+# Detener todo
+docker compose down
+
+# Detener y eliminar volúmenes (¡BORRA la base de datos!)
+docker compose down -v
 ```
 
-La salida de `status` debe mostrar `active (running)` en verde. Ejemplo:
-
-```
-● ondra-monitor.service - ONDRA Monitor — Backend API
-     Loaded: loaded (/etc/systemd/system/ondra-monitor.service; enabled)
-     Active: active (running) since ...
-```
-
-### 11. Comandos de operación diaria
+Acceder a PostgreSQL directamente:
 
 ```bash
-# Ver estado del servicio
-sudo systemctl status ondra-monitor
-
-# Ver logs en tiempo real (Ctrl+C para salir)
-sudo journalctl -u ondra-monitor -f
-
-# Ver los últimos 50 líneas de log
-sudo journalctl -u ondra-monitor -n 50
-
-# Ver logs de hoy
-sudo journalctl -u ondra-monitor --since today
-
-# Reiniciar el servicio (necesario tras actualizar el código)
-sudo systemctl restart ondra-monitor
-
-# Detener el servicio
-sudo systemctl stop ondra-monitor
-
-# Deshabilitar el inicio automático (no lo elimina, solo evita que arranque solo)
-sudo systemctl disable ondra-monitor
+docker compose exec postgres psql -U ondra -d ondra_monitor
 ```
 
-### Proceso de actualización en Linux
+---
+
+### Proceso de actualización
 
 ```bash
-# 1. Ir al directorio del backend
-cd /opt/ondra-monitor/backend
+cd /opt/ondra/dashboardViewer-backend
 
-# 2. Copiar los nuevos archivos al servidor (o hacer git pull si hay acceso)
-# scp -r /ruta/local/build/* usuario@servidor:/opt/ondra-monitor/backend/
+# 1. Traer los cambios del repositorio
+git pull origin main
+cd ../dashboardViewer-frontend && git pull origin main
+cd ../dashboardViewer-backend
 
-# 3. Corregir permisos si es necesario
-sudo chown -R ondra-app:ondra-app /opt/ondra-monitor/backend
+# 2. Reconstruir y reiniciar (las migraciones corren solas en el entrypoint)
+docker compose up -d --build
 
-# 4. Instalar dependencias nuevas o actualizadas
-sudo -u ondra-app npm install
-
-# 5. Recompilar TypeScript
-sudo -u ondra-app npm run build
-
-# 6. Ejecutar migraciones (idempotente — no borra datos existentes)
-sudo -u ondra-app npm run db:migrate
-
-# 7. Reiniciar el servicio para aplicar los cambios
-sudo systemctl restart ondra-monitor
-
-# 8. Verificar que quedó corriendo
-sudo systemctl status ondra-monitor
-sudo journalctl -u ondra-monitor -n 20
+# 3. Verificar que todo levantó correctamente
+docker compose ps
+docker compose logs -f backend
 ```
 
 ---

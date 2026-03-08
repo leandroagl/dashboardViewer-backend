@@ -156,7 +156,7 @@ export async function loginUser(
       const restantes = 10 - nuevoIntentos;
       return {
         status: 'wrong',
-        intentos_restantes: restantes < 5 ? restantes : null,
+        intentos_restantes: restantes <= 5 ? restantes : null,
       };
     }
 
