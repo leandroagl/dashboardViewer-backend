@@ -27,8 +27,8 @@ async function seed() {
 
     // 1. Crear (o recuperar) el cliente ONDRA
     const clienteResult = await client.query(`
-      INSERT INTO clientes (nombre, slug, prtg_group)
-      VALUES ('ONDRA', 'ondra', 'ONDRA')
+      INSERT INTO clientes (nombre, slug, prtg_group, prtg_extra_probes)
+      VALUES ('ONDRA', 'ondra', 'ONDRA', 'Velia')
       ON CONFLICT (slug) DO UPDATE SET slug = EXCLUDED.slug
       RETURNING id
     `);
