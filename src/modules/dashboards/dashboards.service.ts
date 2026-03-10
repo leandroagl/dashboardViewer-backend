@@ -35,7 +35,7 @@ function groupNameToDashboard(groupName: string): DashboardType | null {
 
 // ─── Detección automática de dashboards disponibles ──────────────────────────
 export async function getAvailableDashboards(prtgGroup: string, extraProbes: string[] = []): Promise<DashboardType[]> {
-  const cacheKey = `available:${prtgGroup}`;
+  const cacheKey = `available:${[prtgGroup, ...extraProbes].sort().join(",")}`;
   const cached = getCached<DashboardType[]>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
