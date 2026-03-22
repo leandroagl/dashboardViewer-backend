@@ -67,14 +67,20 @@ ALTER TABLE usuarios       ADD COLUMN IF NOT EXISTS bloqueado_hasta     TIMESTAM
 ALTER TABLE usuarios       ADD COLUMN IF NOT EXISTS cantidad_bloqueos   INTEGER     NOT NULL DEFAULT 0;
 
 -- ─── Índices para consultas frecuentes ───────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp    ON audit_logs(timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_usuario_id   ON audit_logs(usuario_id);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_cliente_id   ON audit_logs(cliente_id);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_accion       ON audit_logs(accion);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_ip_origen    ON audit_logs(ip_origen);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_usuario  ON refresh_tokens(usuario_id);
-CREATE INDEX IF NOT EXISTS idx_usuarios_email          ON usuarios(email);
-CREATE INDEX IF NOT EXISTS idx_usuarios_cliente_id     ON usuarios(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp      ON audit_logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_usuario_id     ON audit_logs(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_cliente_id     ON audit_logs(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_accion         ON audit_logs(accion);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_ip_origen      ON audit_logs(ip_origen);
+-- Índice compuesto para filtros combinados accion+resultado (frecuente en getLogs y resumen)
+CREATE INDEX IF NOT EXISTS idx_audit_logs_accion_resultado ON audit_logs(accion, resultado);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_usuario    ON refresh_tokens(usuario_id);
+-- Índice parcial: consultas de tokens válidos solo leen los no revocados
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_activos    ON refresh_tokens(usuario_id) WHERE revocado = FALSE;
+CREATE INDEX IF NOT EXISTS idx_usuarios_email            ON usuarios(email);
+CREATE INDEX IF NOT EXISTS idx_usuarios_cliente_id       ON usuarios(cliente_id);
+-- FK sin índice explícito: creado_por referencia self-join en auditorías y ABM
+CREATE INDEX IF NOT EXISTS idx_usuarios_creado_por       ON usuarios(creado_por);
 
 `;
 

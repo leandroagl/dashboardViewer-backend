@@ -121,7 +121,9 @@ async function prtgGet<T>(
       code:    error?.code,
       cause:   error?.cause?.message,
     });
-    throw err;
+    // Sanear el mensaje antes de re-lanzar para prevenir filtración del token
+    const rawMessage = error?.message ?? 'PRTG connection error';
+    throw new Error(rawMessage.replace(/apitoken=[^&\s]+/gi, 'apitoken=***'));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -173,7 +175,13 @@ export async function getSensorsByGroup(
         count:        "2500",
       })
         .then((r) => (r.sensors ?? []).filter((s) => allProbes.includes(s.probe)))
-        .catch(() => []),
+        .catch((err: unknown) => {
+          logger.warn("PRTG subgroup fetch failed", {
+            sub,
+            error: (err as Error).message,
+          });
+          return [] as PrtgSensor[];
+        }),
     ),
   );
 

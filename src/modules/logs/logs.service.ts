@@ -56,12 +56,18 @@ export async function getLogs(filters: LogFilters): Promise<LogsResult> {
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
-  // Total de registros para paginación
-  const countResult = await pool.query(
-    `SELECT COUNT(*)::int AS total FROM audit_logs ${where}`,
+  // Resumen del período filtrado — incluye total_eventos que se reutiliza para paginación,
+  // evitando una segunda query COUNT(*) separada con el mismo WHERE.
+  const resumenResult = await pool.query(
+    `SELECT
+       COUNT(*)::int                                                       AS total_eventos,
+       COUNT(*) FILTER (WHERE accion = 'login' AND resultado = 'ok')::int AS logins_exitosos,
+       COUNT(*) FILTER (WHERE accion = 'login_fallido')::int              AS logins_fallidos,
+       COUNT(DISTINCT usuario_id) FILTER (WHERE usuario_id IS NOT NULL)::int AS usuarios_activos
+     FROM audit_logs ${where}`,
     params
   );
-  const total = countResult.rows[0].total;
+  const total = resumenResult.rows[0].total_eventos as number;
 
   // Paginación
   const offset = (filters.page - 1) * filters.limit;
@@ -76,17 +82,6 @@ export async function getLogs(filters: LogFilters): Promise<LogsResult> {
      ORDER BY al.timestamp DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
-  );
-
-  // Resumen del período filtrado
-  const resumenResult = await pool.query(
-    `SELECT
-       COUNT(*)::int                                                  AS total_eventos,
-       COUNT(*) FILTER (WHERE accion = 'login' AND resultado = 'ok')::int AS logins_exitosos,
-       COUNT(*) FILTER (WHERE accion = 'login_fallido')::int          AS logins_fallidos,
-       COUNT(DISTINCT usuario_id) FILTER (WHERE usuario_id IS NOT NULL)::int AS usuarios_activos
-     FROM audit_logs ${where}`,
-    params.slice(0, params.length - 2) // Sin LIMIT/OFFSET
   );
 
   return {
@@ -111,7 +106,8 @@ export async function getSuspiciousIps(): Promise<{ ip_origen: string; intentos:
        AND timestamp  >= NOW() - INTERVAL '10 minutes'
      GROUP BY ip_origen
      HAVING COUNT(*) >= 3
-     ORDER BY intentos DESC`
+     ORDER BY intentos DESC
+     LIMIT 100`
   );
   return result.rows;
 }
@@ -164,16 +160,11 @@ export async function exportLogsCsv(filters: Omit<LogFilters, 'page' | 'limit'>)
   return [header, ...rows].join('\n');
 }
 
-/** Elimina todos los registros de audit_logs (o por filtro de fecha) */
-export async function purgeLogs(antes_de?: string): Promise<number> {
-  let result;
-  if (antes_de) {
-    result = await pool.query(
-      `DELETE FROM audit_logs WHERE timestamp < $1`,
-      [antes_de]
-    );
-  } else {
-    result = await pool.query(`DELETE FROM audit_logs`);
-  }
+/** Elimina registros de audit_logs anteriores a la fecha indicada */
+export async function purgeLogs(antes_de: string): Promise<number> {
+  const result = await pool.query(
+    `DELETE FROM audit_logs WHERE timestamp < $1`,
+    [antes_de]
+  );
   return result.rowCount ?? 0;
 }

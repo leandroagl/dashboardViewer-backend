@@ -22,11 +22,29 @@ const prodFormat = combine(
   json()
 );
 
+const transports: winston.transport[] = [
+  new winston.transports.Console(),
+];
+
+if (!env.isDev) {
+  // En producción: persistir logs en archivos con rotación por tamaño (10 MB, 5 archivos)
+  transports.push(
+    new winston.transports.File({
+      filename: 'logs/app.log',
+      maxsize:  10_485_760, // 10 MB
+      maxFiles: 5,
+    }),
+    new winston.transports.File({
+      filename: 'logs/error.log',
+      level:    'error',
+      maxsize:  10_485_760,
+      maxFiles: 5,
+    }),
+  );
+}
+
 export const logger = winston.createLogger({
-  level:     env.isDev ? 'debug' : 'info',
-  format:    env.isDev ? devFormat : prodFormat,
-  transports: [
-    new winston.transports.Console(),
-    // En producción se podría agregar un transporte a archivo o servicio externo
-  ],
+  level:      env.isDev ? 'debug' : 'info',
+  format:     env.isDev ? devFormat : prodFormat,
+  transports,
 });

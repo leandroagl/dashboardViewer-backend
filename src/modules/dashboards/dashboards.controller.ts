@@ -4,8 +4,8 @@
 
 import { Request, Response } from 'express';
 import { sendOk, sendError, sendServerError } from '../../utils/response';
-import { getClientIp } from '../../middleware/auditLogger';
-import { UserRole } from '../../types';
+import { audit, getClientIp } from '../../middleware/auditLogger';
+import { AuditAction, AuditResult, UserRole } from '../../types';
 import { logger } from '../../utils/logger';
 import { getClientBySlug } from '../clients/clients.service';
 import * as DashboardsService from './dashboards.service';
@@ -27,6 +27,14 @@ async function resolveClientAccess(req: Request, res: Response): Promise<{ prtgG
   // viewer solo puede acceder a su propio cliente
   if (req.user!.rol !== UserRole.ADMIN_ONDRA) {
     if (client.id !== req.user!.cliente_id) {
+      await audit({
+        usuario_id: req.user!.sub,
+        email:      req.user!.email,
+        cliente_id: client.id,
+        accion:     AuditAction.ACCESS_DENIED,
+        ip_origen:  getClientIp(req),
+        resultado:  AuditResult.UNAUTHORIZED,
+      });
       sendError(res, 403, 'Acceso denegado.');
       return null;
     }
@@ -55,13 +63,21 @@ export async function getAvailable(req: Request, res: Response): Promise<void> {
 
 /** GET /:clientSlug/dashboards/servers */
 export async function getServers(req: Request, res: Response): Promise<void> {
-  const ip = getClientIp(req);
   try {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
     const data = await DashboardsService.getVmwareDashboard(access.prtgGroup, access.extraProbes);
 
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      cliente_id: access.clienteId,
+      accion:     AuditAction.DASHBOARD_VIEW,
+      dashboard:  'servers',
+      ip_origen:  getClientIp(req),
+      resultado:  AuditResult.OK,
+    });
     sendOk(res, data);
   } catch (err) {
     logger.error('Error en dashboard servers', { error: err });
@@ -71,13 +87,21 @@ export async function getServers(req: Request, res: Response): Promise<void> {
 
 /** GET /:clientSlug/dashboards/backups */
 export async function getBackups(req: Request, res: Response): Promise<void> {
-  const ip = getClientIp(req);
   try {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
     const data = await DashboardsService.getBackupsDashboard(access.prtgGroup, access.extraProbes);
 
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      cliente_id: access.clienteId,
+      accion:     AuditAction.DASHBOARD_VIEW,
+      dashboard:  'backups',
+      ip_origen:  getClientIp(req),
+      resultado:  AuditResult.OK,
+    });
     sendOk(res, data);
   } catch (err) {
     logger.error('Error en dashboard backups', { error: err });
@@ -87,13 +111,21 @@ export async function getBackups(req: Request, res: Response): Promise<void> {
 
 /** GET /:clientSlug/dashboards/networking */
 export async function getNetworking(req: Request, res: Response): Promise<void> {
-  const ip = getClientIp(req);
   try {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
     const data = await DashboardsService.getNetworkingDashboard(access.prtgGroup, access.extraProbes);
 
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      cliente_id: access.clienteId,
+      accion:     AuditAction.DASHBOARD_VIEW,
+      dashboard:  'networking',
+      ip_origen:  getClientIp(req),
+      resultado:  AuditResult.OK,
+    });
     sendOk(res, data);
   } catch (err) {
     logger.error('Error en dashboard networking', { error: err });
@@ -103,13 +135,21 @@ export async function getNetworking(req: Request, res: Response): Promise<void> 
 
 /** GET /:clientSlug/dashboards/windows */
 export async function getWindows(req: Request, res: Response): Promise<void> {
-  const ip = getClientIp(req);
   try {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
     const data = await DashboardsService.getWindowsDashboard(access.prtgGroup, access.extraProbes);
 
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      cliente_id: access.clienteId,
+      accion:     AuditAction.DASHBOARD_VIEW,
+      dashboard:  'windows',
+      ip_origen:  getClientIp(req),
+      resultado:  AuditResult.OK,
+    });
     sendOk(res, data);
   } catch (err) {
     logger.error('Error en dashboard windows', { error: err });
@@ -119,13 +159,21 @@ export async function getWindows(req: Request, res: Response): Promise<void> {
 
 /** GET /:clientSlug/dashboards/sucursales */
 export async function getSucursales(req: Request, res: Response): Promise<void> {
-  const ip = getClientIp(req);
   try {
     const access = await resolveClientAccess(req, res);
     if (!access) return;
 
     const data = await DashboardsService.getSucursalesDashboard(access.prtgGroup, access.extraProbes);
 
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      cliente_id: access.clienteId,
+      accion:     AuditAction.DASHBOARD_VIEW,
+      dashboard:  'sucursales',
+      ip_origen:  getClientIp(req),
+      resultado:  AuditResult.OK,
+    });
     sendOk(res, data);
   } catch (err) {
     logger.error('Error en dashboard sucursales', { error: err });

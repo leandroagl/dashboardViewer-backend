@@ -45,14 +45,16 @@ async function seed() {
       [SEED_EMAIL, SEED_NOMBRE, passwordHash, ondraClienteId]
     );
 
-    // Mostrar contraseña UNA SOLA VEZ (nunca se vuelve a recuperar)
-    logger.info('─────────────────────────────────────────────');
-    logger.info('Usuario superadmin creado:');
-    logger.info(`  Nombre:     ${SEED_NOMBRE}`);
-    logger.info(`  Email:      ${SEED_EMAIL}`);
-    logger.info(`  Contraseña: ${plainPassword}`);
-    logger.info('  ⚠ Guardá esta contraseña — no se volverá a mostrar.');
-    logger.info('─────────────────────────────────────────────');
+    // Mostrar contraseña UNA SOLA VEZ por stdout (no por logger para que no
+    // quede registrada en archivos de log si hay file transport configurado)
+    process.stdout.write('\n─────────────────────────────────────────────\n');
+    process.stdout.write('Usuario superadmin creado:\n');
+    process.stdout.write(`  Nombre:     ${SEED_NOMBRE}\n`);
+    process.stdout.write(`  Email:      ${SEED_EMAIL}\n`);
+    process.stdout.write(`  Contraseña: ${plainPassword}\n`);
+    process.stdout.write('  Guardá esta contraseña — no se volverá a mostrar.\n');
+    process.stdout.write('─────────────────────────────────────────────\n\n');
+    logger.info('Usuario superadmin creado correctamente.');
 
   } finally {
     client.release();

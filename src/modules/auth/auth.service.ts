@@ -132,10 +132,19 @@ export async function loginUser(
   if (!user || !isValid) {
     // Rastrear intentos solo para usuarios existentes
     if (user) {
-      const nuevoIntentos = (user.intentos_fallidos ?? 0) + 1;
+      // Incremento atómico en SQL — evita race condition de read-modify-write
+      const incrResult = await pool.query(
+        `UPDATE usuarios
+         SET intentos_fallidos = intentos_fallidos + 1
+         WHERE id = $1
+         RETURNING intentos_fallidos, cantidad_bloqueos`,
+        [user.id],
+      );
+      const nuevoIntentos    = incrResult.rows[0].intentos_fallidos as number;
+      const cantidadBloqueos = incrResult.rows[0].cantidad_bloqueos as number;
 
       if (nuevoIntentos >= 10) {
-        const durMs      = lockoutDurationMs(user.cantidad_bloqueos ?? 0);
+        const durMs          = lockoutDurationMs(cantidadBloqueos);
         const bloqueadoHasta = new Date(Date.now() + durMs);
         await pool.query(
           `UPDATE usuarios
@@ -148,10 +157,6 @@ export async function loginUser(
         return { status: 'locked', bloqueado_hasta: bloqueadoHasta };
       }
 
-      await pool.query(
-        `UPDATE usuarios SET intentos_fallidos = $1 WHERE id = $2`,
-        [nuevoIntentos, user.id],
-      );
       // Informar restantes solo cuando quedan ≤5
       const restantes = 10 - nuevoIntentos;
       return {
@@ -347,15 +352,25 @@ export async function changePassword(
   if (!isValid) return { ok: false, error: "La contraseña actual es incorrecta." };
 
   const newHash = await bcrypt.hash(newPassword, 12);
-  await pool.query(
-    `UPDATE usuarios SET password_hash = $1, debe_cambiar_password = FALSE WHERE id = $2`,
-    [newHash, userId],
-  );
 
-  await pool.query(
-    `UPDATE refresh_tokens SET revocado = TRUE, revocado_en = NOW() WHERE usuario_id = $1`,
-    [userId],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE usuarios SET password_hash = $1, debe_cambiar_password = FALSE WHERE id = $2`,
+      [newHash, userId],
+    );
+    await client.query(
+      `UPDATE refresh_tokens SET revocado = TRUE, revocado_en = NOW() WHERE usuario_id = $1`,
+      [userId],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 
   return { ok: true };
 }

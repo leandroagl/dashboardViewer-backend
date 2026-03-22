@@ -9,7 +9,6 @@ import { logger } from '../../utils/logger';
 import * as UsersService from './users.service';
 import { UserValidationError } from './users.service';
 import { revokeKioskSession } from '../auth/auth.service';
-import { pool } from '../../config/database/pool';
 
 /** Valida que el parámetro :id sea un UUID válido */
 export const idParamValidator = [
@@ -140,7 +139,7 @@ export async function setStatus(req: Request, res: Response): Promise<void> {
     await audit({
       usuario_id: req.user!.sub,
       email:      req.user!.email,
-      accion:     AuditAction.USER_DEACTIVATED,
+      accion:     activo ? AuditAction.USER_ACTIVATED : AuditAction.USER_DEACTIVATED,
       ip_origen:  ip,
       resultado:  AuditResult.OK,
     });
@@ -198,6 +197,7 @@ export async function revokeKiosk(req: Request, res: Response): Promise<void> {
 
 /** POST /admin/users/:id/unlock */
 export async function unlock(req: Request, res: Response): Promise<void> {
+  const ip = getClientIp(req);
   const { id } = req.params;
   try {
     const user = await UsersService.unlockUser(id);
@@ -205,6 +205,15 @@ export async function unlock(req: Request, res: Response): Promise<void> {
       sendError(res, 404, 'Usuario no encontrado.');
       return;
     }
+
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      accion:     AuditAction.USER_UNLOCKED,
+      ip_origen:  ip,
+      resultado:  AuditResult.OK,
+    });
+
     sendOk(res, user);
   } catch (err) {
     logger.error('Error al desbloquear usuario', { error: err });
@@ -228,8 +237,8 @@ export async function deleteUserHandler(req: Request, res: Response): Promise<vo
       sendError(res, 403, 'Este usuario es inmutable y no puede ser eliminado.');
       return;
     }
-    const result = await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
-    if ((result.rowCount ?? 0) === 0) {
+    const deleted = await UsersService.deleteUser(id);
+    if (!deleted) {
       sendError(res, 404, 'Usuario no encontrado.');
       return;
     }

@@ -13,6 +13,14 @@ function requireEnv(name: string): string {
   return value;
 }
 
+function requireEnvMinLength(name: string, minLength: number): string {
+  const value = requireEnv(name);
+  if (value.length < minLength) {
+    throw new Error(`${name} debe tener al menos ${minLength} caracteres (actual: ${value.length})`);
+  }
+  return value;
+}
+
 function optionalEnv(name: string, fallback: string): string {
   return process.env[name] ?? fallback;
 }
@@ -35,9 +43,9 @@ export const env = {
 
   // JWT
   jwt: {
-    accessSecret: requireEnv("JWT_ACCESS_SECRET"),
-    refreshSecret: requireEnv("JWT_REFRESH_SECRET"),
-    accessExpiresIn: optionalEnv("JWT_ACCESS_EXPIRES_IN", "5h"),
+    accessSecret:    requireEnvMinLength("JWT_ACCESS_SECRET",  32),
+    refreshSecret:   requireEnvMinLength("JWT_REFRESH_SECRET", 32),
+    accessExpiresIn:  optionalEnv("JWT_ACCESS_EXPIRES_IN",  "5h"),
     refreshExpiresIn: optionalEnv("JWT_REFRESH_EXPIRES_IN", "7d"),
   },
 
@@ -67,6 +75,5 @@ export const env = {
   cookie: {
     domain: optionalEnv("COOKIE_DOMAIN", "localhost"),
     secure: optionalEnv("COOKIE_SECURE", "false") === "true",
-    sameSite: "lax",
   },
 } as const;
