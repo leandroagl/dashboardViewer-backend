@@ -501,6 +501,7 @@ export interface NetworkingDashboard {
   switches:    NetworkDevice[];
   ptpAntennas: NetworkDevice[];
   alerts:      { name: string; message: string; status: SensorStatus }[];
+  sparklines:  SparklineMap; // keys: "<deviceName>/<sensorName>" — solo sensores del array devices
 }
 
 function filterByLeafGroup(sensors: PrtgSensor[], leafPattern: RegExp): PrtgSensor[] {
@@ -539,11 +540,28 @@ export async function getNetworkingDashboard(prtgGroup: string, extraProbes: str
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
     .map((s) => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
+  const netSparklineResults = await Promise.all(
+    netSensors.map(s =>
+      getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+    )
+  );
+
+  const sparklines: SparklineMap = {};
+  netSensors.forEach((s, i) => {
+    const device = s.device || s.name;
+    const key    = `${device}/${s.name}`;
+    sparklines[key] = {
+      objid:  s.objid,
+      values: extractChannelValues(netSparklineResults[i]).slice(-12),
+    };
+  });
+
   const result: NetworkingDashboard = {
     devices:     buildNetworkDevices(netSensors),
     switches:    buildNetworkDevices(switchSensors),
     ptpAntennas: buildNetworkDevices(ptpSensors),
     alerts,
+    sparklines,
   };
   setCache(cacheKey, result);
   return result;
