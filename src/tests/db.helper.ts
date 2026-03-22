@@ -3,6 +3,7 @@
 
 import { Pool } from 'pg';
 import { env } from '../config/env';
+import { migrations } from '../config/database/migrations';
 
 // Pool exclusivo para tests — conecta a ondra_monitor_test
 export const testPool = new Pool({
@@ -38,18 +39,7 @@ export async function createTestDatabase(): Promise<void> {
 
 /** Ejecuta las migraciones en la DB de test. */
 export async function runMigrations(): Promise<void> {
-  const fs   = await import('fs');
-  const path = await import('path');
-  const sql  = fs.readFileSync(
-    path.resolve(__dirname, '../config/database/migrate.ts'),
-    'utf8',
-  );
-
-  // Extraer solo el bloque SQL de la variable `migrations`
-  const match = sql.match(/const migrations = `([\s\S]*?)`;/);
-  if (!match) throw new Error('No se encontró el bloque SQL en migrate.ts');
-
-  await testPool.query(match[1]);
+  await testPool.query(migrations);
 }
 
 /** Trunca todas las tablas de datos entre tests (preserva el schema). */
