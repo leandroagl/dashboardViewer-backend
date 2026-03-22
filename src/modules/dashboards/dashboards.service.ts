@@ -2,8 +2,12 @@
 import {
   PrtgSensor,
   PrtgChannel,
+  PrtgHistoricPoint,
+  HistoryRange,
+  RANGE_CONFIG,
   getSensorsByGroup,
   getSensorChannels,
+  getHistoricData,
 } from "../prtg/prtg.client";
 import { logger } from "../../utils/logger";
 import { getCached, setCache } from "../../utils/cache";
@@ -113,6 +117,36 @@ function normalizePrtgStatus(statusRaw: number): SensorStatus {
 function rawBytesToGb(raw: number | undefined): number | null {
   if (!raw || raw <= 0) return null;
   return Math.round(raw / (1024 * 1024 * 1024) * 10) / 10;
+}
+
+// ─── Tipos y helpers para sparklines ─────────────────────────────────────────
+
+export interface SparklineEntry {
+  objid:  number;
+  values: number[];
+}
+
+export type SparklineMap = Record<string, SparklineEntry>;
+
+/**
+ * Extrae valores numéricos de histdata PRTG para el canal que coincide
+ * con channelPattern. Si no se especifica patrón, usa el primero disponible.
+ * Retorna solo los valores numéricos, omitiendo puntos sin dato.
+ */
+export function extractChannelValues(
+  histdata:       PrtgHistoricPoint[],
+  channelPattern: RegExp = /.*/,
+): number[] {
+  const values: number[] = [];
+  for (const point of histdata) {
+    for (const [key, val] of Object.entries(point)) {
+      if (key.startsWith('value_raw') && channelPattern.test(key) && typeof val === 'number') {
+        values.push(val);
+        break;
+      }
+    }
+  }
+  return values;
 }
 
 // ─── Dashboard: Servidores VMware ─────────────────────────────────────────────

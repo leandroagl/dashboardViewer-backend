@@ -50,6 +50,37 @@ interface PrtgChannelResponse {
   channels: PrtgChannel[];
 }
 
+export type HistoryRange = '1h' | '24h' | '7d' | '30d';
+
+export interface PrtgHistoricPoint {
+  datetime:    string | undefined;
+  [key: string]: string | number | undefined;
+}
+
+interface PrtgHistoricResponse {
+  histdata?: PrtgHistoricPoint[];
+}
+
+// Exported so dashboards.service.ts can reuse it for getHistoryData
+export const RANGE_CONFIG: Record<HistoryRange, { avg: number; hours: number }> = {
+  '1h':  { avg: 300,   hours: 1   },
+  '24h': { avg: 3600,  hours: 24  },
+  '7d':  { avg: 86400, hours: 168 },
+  '30d': { avg: 86400, hours: 720 },
+};
+
+function prtgDateStr(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return [
+    d.getUTCFullYear(),
+    pad(d.getUTCMonth() + 1),
+    pad(d.getUTCDate()),
+    pad(d.getUTCHours()),
+    pad(d.getUTCMinutes()),
+    pad(d.getUTCSeconds()),
+  ].join('-');
+}
+
 // ─── Cliente ─────────────────────────────────────────────────────────────────
 
 // Agente HTTPS configurable: ignora certificados auto-firmados si
@@ -242,4 +273,33 @@ export async function getSensorChannels(
     id:      String(sensorId),
   }, true);
   return result?.channels ?? [];
+}
+
+/**
+ * Obtiene datos históricos de un sensor PRTG.
+ * @param objid      ID del sensor PRTG.
+ * @param range      Rango de tiempo ('1h' | '24h' | '7d' | '30d').
+ * @param periodEnd  Fin del período (default: ahora). Pasar un Date anterior
+ *                   para obtener el período previo (usado en cálculo de prevStats).
+ */
+export async function getHistoricData(
+  objid:      number,
+  range:      HistoryRange,
+  periodEnd?: Date,
+): Promise<PrtgHistoricPoint[]> {
+  const cfg   = RANGE_CONFIG[range];
+  const edate = periodEnd ?? new Date();
+  const sdate = new Date(edate.getTime() - cfg.hours * 3_600_000);
+
+  try {
+    const result = await prtgGet<PrtgHistoricResponse>('/api/historicdata.json', {
+      id:    String(objid),
+      avg:   String(cfg.avg),
+      sdate: prtgDateStr(sdate),
+      edate: prtgDateStr(edate),
+    }, true);
+    return result.histdata ?? [];
+  } catch {
+    return [];
+  }
 }
