@@ -9,6 +9,7 @@ import { invalidateCache } from '../utils/cache';
 jest.mock('../modules/prtg/prtg.client', () => ({
   getSensorsByGroup: jest.fn(),
   getSensorChannels: jest.fn(),
+  getHistoricData: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock('../config/env', () => ({
