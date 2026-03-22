@@ -164,8 +164,9 @@ export interface VmwareHost {
 }
 
 export interface VmwareDashboard {
-  hosts:  VmwareHost[];
-  alerts: { name: string; message: string; status: SensorStatus }[];
+  hosts:      VmwareHost[];
+  alerts:     { name: string; message: string; status: SensorStatus }[];
+  sparklines: SparklineMap; // keys: "<hostname>/cpu", "/ram", "/diskR", "/diskW", "/datastore"
 }
 
 export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<VmwareDashboard> {
@@ -196,15 +197,24 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
     ds.filter(s => /datastore\s*free/i.test(s.name))
   );
 
-  // Fetch de todos los canales en paralelo (un solo batch)
-  const [hostPerfChannelResults, dsChannelResults] = await Promise.all([
+  // Fetch de todos los canales e históricos en paralelo (un solo batch)
+  const [hostPerfChannelResults, dsChannelResults, hostPerfSparklineResults, dsSparklineResults] = await Promise.all([
     Promise.all(hostPerfSensors.map(s =>
       s ? getSensorChannels(s.objid).catch(() => null) : Promise.resolve(null)
     )),
     Promise.all(allDatastoreSensors.map(s =>
       getSensorChannels(s.objid).catch(() => null)
     )),
+    Promise.all(hostPerfSensors.map(s =>
+      s ? getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[]) : Promise.resolve([] as PrtgHistoricPoint[])
+    )),
+    Promise.all(allDatastoreSensors.map(s =>
+      getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+    )),
   ]);
+
+  const dsSparklineById = new Map<number, PrtgHistoricPoint[]>();
+  allDatastoreSensors.forEach((s, i) => dsSparklineById.set(s.objid, dsSparklineResults[i]));
 
   // Mapa de canales de datastore por objid
   const dsChannelsById = new Map<number, PrtgChannel[] | null>();
@@ -320,7 +330,24 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
     .map((s) => ({ name: `${s.device} — ${s.name}`, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-  const result: VmwareDashboard = { hosts, alerts: allAlerts };
+  const sparklines: SparklineMap = {};
+  deviceEntries.forEach(([device], i) => {
+    const perfSensor = hostPerfSensors[i];
+    if (!perfSensor) return;
+    const histdata = hostPerfSparklineResults[i];
+    const objid    = perfSensor.objid;
+    sparklines[`${device}/cpu`]   = { objid, values: extractChannelValues(histdata, /cpu\s*usage/i).slice(-12) };
+    sparklines[`${device}/ram`]   = { objid, values: extractChannelValues(histdata, /memory\s*consum/i).slice(-12) };
+    sparklines[`${device}/diskR`] = { objid, values: extractChannelValues(histdata, /disk.*read|read.*rate/i).slice(-12) };
+    sparklines[`${device}/diskW`] = { objid, values: extractChannelValues(histdata, /disk.*write|write.*rate/i).slice(-12) };
+  });
+  allDatastoreSensors.forEach(s => {
+    const histdata = dsSparklineById.get(s.objid) ?? [];
+    const device   = s.device || s.name;
+    sparklines[`${device}/datastore`] = { objid: s.objid, values: extractChannelValues(histdata).slice(-12) };
+  });
+
+  const result: VmwareDashboard = { hosts, alerts: allAlerts, sparklines };
   setCache(cacheKey, result);
   return result;
 }

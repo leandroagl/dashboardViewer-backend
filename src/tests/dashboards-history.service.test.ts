@@ -21,6 +21,13 @@ jest.mock('../config/env', () => ({
 }));
 
 import { extractChannelValues } from '../modules/dashboards/dashboards.service';
+import { getSensorsByGroup, getSensorChannels, getHistoricData } from '../modules/prtg/prtg.client';
+import { getVmwareDashboard } from '../modules/dashboards/dashboards.service';
+import { invalidateCache } from '../utils/cache';
+
+const mockGetSensors  = getSensorsByGroup as jest.MockedFunction<typeof getSensorsByGroup>;
+const mockGetChannels = getSensorChannels as jest.MockedFunction<typeof getSensorChannels>;
+const mockGetHistoric = getHistoricData   as jest.MockedFunction<typeof getHistoricData>;
 
 describe('extractChannelValues', () => {
   test('extracts value_raw from single-channel histdata', () => {
@@ -53,5 +60,50 @@ describe('extractChannelValues', () => {
       { datetime: '2026-03-22 10:05:00', 'value_raw (CPU Usage)': 10.0 },
     ];
     expect(extractChannelValues(histdata)).toEqual([10.0]);
+  });
+});
+
+describe('VmwareDashboard sparklines', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    invalidateCache('vmware:ONDRA');
+  });
+
+  test('incluye sparklines con objid y values para cada host/métrica', async () => {
+    mockGetSensors.mockResolvedValue([{
+      objid: 100, name: 'Host Performance', device: 'ESX01',
+      group: 'Servers', probe: 'ONDRA', status: 'Up', status_raw: 3,
+      lastvalue: '23 %', message: 'OK', tags: '',
+    }]);
+    mockGetChannels.mockResolvedValue([
+      { name: 'CPU Usage',         lastvalue: '23 %',   lastvalue_raw: 23   },
+      { name: 'Memory Consumed',   lastvalue: '65 %',   lastvalue_raw: 65   },
+      { name: 'Disk Read Rate',    lastvalue: '2.1 MB', lastvalue_raw: 2.1  },
+      { name: 'Disk Write Rate',   lastvalue: '0.8 MB', lastvalue_raw: 0.8  },
+    ]);
+    mockGetHistoric.mockResolvedValue([
+      { datetime: '...', 'value_raw (CPU Usage)': 20, 'value_raw (Memory Consumed)': 60, 'value_raw (Disk Read Rate)': 1.5, 'value_raw (Disk Write Rate)': 0.5 },
+      { datetime: '...', 'value_raw (CPU Usage)': 23, 'value_raw (Memory Consumed)': 65, 'value_raw (Disk Read Rate)': 2.1, 'value_raw (Disk Write Rate)': 0.8 },
+    ]);
+
+    const result = await getVmwareDashboard('ONDRA');
+
+    expect(result.sparklines['ESX01/cpu']).toEqual({ objid: 100, values: [20, 23] });
+    expect(result.sparklines['ESX01/ram']).toEqual({ objid: 100, values: [60, 65] });
+    expect(result.sparklines['ESX01/diskR']).toEqual({ objid: 100, values: [1.5, 2.1] });
+    expect(result.sparklines['ESX01/diskW']).toEqual({ objid: 100, values: [0.5, 0.8] });
+  });
+
+  test('sparklines es {} cuando no hay Host Performance sensor', async () => {
+    mockGetSensors.mockResolvedValue([{
+      objid: 1, name: 'Uptime', device: 'ESX01',
+      group: 'Servers', probe: 'ONDRA', status: 'Up', status_raw: 3,
+      lastvalue: '5 d', message: 'OK', tags: '',
+    }]);
+    mockGetChannels.mockResolvedValue([]);
+    mockGetHistoric.mockResolvedValue([]);
+
+    const result = await getVmwareDashboard('ONDRA');
+    expect(result.sparklines).toEqual({});
   });
 });
