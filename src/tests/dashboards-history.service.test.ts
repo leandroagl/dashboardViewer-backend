@@ -22,7 +22,7 @@ jest.mock('../config/env', () => ({
 
 import { extractChannelValues } from '../modules/dashboards/dashboards.service';
 import { getSensorsByGroup, getSensorChannels, getHistoricData } from '../modules/prtg/prtg.client';
-import { getVmwareDashboard } from '../modules/dashboards/dashboards.service';
+import { getVmwareDashboard, getBackupsDashboard } from '../modules/dashboards/dashboards.service';
 import { invalidateCache } from '../utils/cache';
 
 const mockGetSensors  = getSensorsByGroup as jest.MockedFunction<typeof getSensorsByGroup>;
@@ -105,5 +105,35 @@ describe('VmwareDashboard sparklines', () => {
 
     const result = await getVmwareDashboard('ONDRA');
     expect(result.sparklines).toEqual({});
+  });
+});
+
+describe('BackupsDashboard sparklines', () => {
+  beforeEach(() => { jest.clearAllMocks(); invalidateCache('backups:ONDRA'); });
+
+  test('incluye sparklines con los últimos 7 resultados binarios del job', async () => {
+    mockGetSensors.mockResolvedValue([{
+      objid: 200, name: 'Job - Backup diario', device: 'Veeam',
+      group: 'Backups', probe: 'ONDRA', status: 'Up', status_raw: 3,
+      lastvalue: '0 h', message: 'OK', tags: '',
+    }]);
+    mockGetChannels.mockResolvedValue([
+      { name: 'Last Job Run', lastvalue: '2 h', lastvalue_raw: 2 },
+    ]);
+    mockGetHistoric.mockResolvedValue([
+      { datetime: '...', 'value_raw (Last Result)': 1 },
+      { datetime: '...', 'value_raw (Last Result)': 1 },
+      { datetime: '...', 'value_raw (Last Result)': 0 },
+      { datetime: '...', 'value_raw (Last Result)': 1 },
+      { datetime: '...', 'value_raw (Last Result)': 1 },
+      { datetime: '...', 'value_raw (Last Result)': 1 },
+      { datetime: '...', 'value_raw (Last Result)': 1 },
+    ]);
+
+    const result = await getBackupsDashboard('ONDRA');
+    expect(result.sparklines['Veeam/Job - Backup diario']).toEqual({
+      objid: 200,
+      values: [1, 1, 0, 1, 1, 1, 1],
+    });
   });
 });

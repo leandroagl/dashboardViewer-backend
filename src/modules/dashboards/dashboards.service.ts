@@ -374,6 +374,7 @@ export interface BackupsDashboard {
   successRate7d: number;
   devices:       BackupDevice[];
   alerts:        { name: string; message: string; status: SensorStatus }[];
+  sparklines:    SparklineMap; // keys: "<deviceName>/<jobName>" — últimos 7 resultados binarios
 }
 
 export async function getBackupsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<BackupsDashboard> {
@@ -402,10 +403,16 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
     !/^veeam backup job status$/i.test(s.name.trim())
   );
 
-  const [diskChannelResults, veeamChannelResults] = await Promise.all([
+  const [diskChannelResults, veeamChannelResults, jobSparklineResults] = await Promise.all([
     Promise.all(allLogicalDiskSensors.map(s => getSensorChannels(s.objid).catch(() => null))),
     Promise.all(veeamJobSensors.map(s => getSensorChannels(s.objid).catch(() => null))),
+    Promise.all(veeamJobSensors.map(s =>
+      getHistoricData(s.objid, '7d').catch(() => [] as PrtgHistoricPoint[])
+    )),
   ]);
+
+  const jobSparklineById = new Map<number, PrtgHistoricPoint[]>();
+  veeamJobSensors.forEach((s, i) => jobSparklineById.set(s.objid, jobSparklineResults[i]));
 
   const diskChannelsById = new Map<number, PrtgChannel[] | null>();
   allLogicalDiskSensors.forEach((s, i) => diskChannelsById.set(s.objid, diskChannelResults[i]));
@@ -464,7 +471,20 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
 
   const allAlerts = devices.flatMap(d => d.alerts);
 
-  const result: BackupsDashboard = { successRate7d, devices, alerts: allAlerts };
+  const sparklines: SparklineMap = {};
+  for (const device of devices) {
+    for (const job of device.jobs) {
+      const sensor = sensors.find(s => (s.device || s.name) === device.name && s.name === job.name);
+      if (!sensor) continue;
+      const histdata = jobSparklineById.get(sensor.objid) ?? [];
+      sparklines[`${device.name}/${job.name}`] = {
+        objid:  sensor.objid,
+        values: extractChannelValues(histdata).slice(-7),
+      };
+    }
+  }
+
+  const result: BackupsDashboard = { successRate7d, devices, alerts: allAlerts, sparklines };
   setCache(cacheKey, result);
   return result;
 }
