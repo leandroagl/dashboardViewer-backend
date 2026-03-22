@@ -299,7 +299,8 @@ export async function getHistoricData(
       edate: prtgDateStr(edate),
     }, true);
     return result.histdata ?? [];
-  } catch {
+  } catch (err: unknown) {
+    logger.warn("PRTG historicdata fetch failed", { objid, range, error: (err as Error).message });
     return [];
   }
 }
