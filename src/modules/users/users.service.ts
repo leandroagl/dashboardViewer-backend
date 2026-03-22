@@ -185,9 +185,36 @@ export async function updateUser(id: string, input: UpdateUserInput): Promise<Om
 }
 
 export async function setUserActive(id: string, activo: boolean): Promise<boolean> {
+  if (!activo) {
+    // Al desactivar: revocar sesiones activas de forma atómica
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        `UPDATE usuarios SET activo = FALSE WHERE id = $1`,
+        [id]
+      );
+      if ((result.rowCount ?? 0) === 0) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      await client.query(
+        `UPDATE refresh_tokens SET revocado = TRUE, revocado_en = NOW() WHERE usuario_id = $1`,
+        [id]
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   const result = await pool.query(
-    `UPDATE usuarios SET activo = $1 WHERE id = $2`,
-    [activo, id]
+    `UPDATE usuarios SET activo = TRUE WHERE id = $1`,
+    [id]
   );
   return (result.rowCount ?? 0) > 0;
 }
@@ -227,6 +254,12 @@ export async function resetPassword(id: string): Promise<string | null> {
   }
 
   return plainPassword;
+}
+
+/** Elimina un usuario por ID. Retorna false si no existía. */
+export async function deleteUser(id: string): Promise<boolean> {
+  const result = await pool.query(`DELETE FROM usuarios WHERE id = $1`, [id]);
+  return (result.rowCount ?? 0) > 0;
 }
 
 /** Desbloquea manualmente una cuenta: resetea intentos, bloqueo y cantidad de bloqueos. */

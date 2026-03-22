@@ -8,7 +8,7 @@ import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 
 import { env } from './config/env';
-import { testDatabaseConnection } from './config/database/pool';
+import { testDatabaseConnection, pool } from './config/database/pool';
 import { logger } from './utils/logger';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 
@@ -23,10 +23,12 @@ import dashboardsRoutes from './modules/dashboards/dashboards.routes';
 
 const app = express();
 
-// Necesario para que Express use la IP real del cliente cuando hay un reverse
-// proxy (nginx, traefik, etc.). Sin esto, el rate limiting afecta a todos
-// por igual usando la IP del proxy.
-app.set('trust proxy', 1);
+// En producción hay un reverse proxy (nginx/traefik) — Express debe
+// usar X-Forwarded-For para obtener la IP real del cliente.
+// En desarrollo no se activa para evitar spoofing de IP en tests locales.
+if (env.nodeEnv === 'production') {
+  app.set('trust proxy', 1);
+}
 
 // ─── Seguridad ────────────────────────────────────────────────────────────────
 
@@ -57,6 +59,16 @@ const loginLimiter = rateLimit({
   message: { ok: false, error: 'Demasiados intentos de login. Intentá de nuevo en 10 minutos.' },
 });
 
+// Rate limiting para refresh — los kiosks refresca tokens cada 5h, pero
+// 60 req/15min por IP es más que suficiente para cualquier uso legítimo
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max:      60,
+  standardHeaders: true,
+  legacyHeaders:   false,
+  message: { ok: false, error: 'Demasiadas solicitudes de refresh. Intentá de nuevo en unos minutos.' },
+});
+
 // ─── Parsers ──────────────────────────────────────────────────────────────────
 
 app.use(express.json({ limit: '1mb' }));
@@ -66,13 +78,19 @@ app.use(cookieParser());
 // ─── Rutas ────────────────────────────────────────────────────────────────────
 
 // Health check (público, sin autenticación)
-app.get('/health', (_req, res) => {
-  res.json({ ok: true, version: '1.0.0', timestamp: new Date().toISOString() });
+app.get('/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({ ok: true, version: '1.0.0', timestamp: new Date().toISOString() });
+  } catch {
+    res.status(503).json({ ok: false, error: 'Database unavailable', timestamp: new Date().toISOString() });
+  }
 });
 
 // Auth
-app.use('/auth/login', loginLimiter);       // Limitar intentos de login
-app.use('/auth',       authRoutes);
+app.use('/auth/login',   loginLimiter);
+app.use('/auth/refresh', refreshLimiter);
+app.use('/auth',         authRoutes);
 
 // Panel de administración (solo admin_ondra — los guards están dentro de cada router)
 app.use('/admin/clients', clientsRoutes);
@@ -102,5 +120,19 @@ async function start(): Promise<void> {
     process.exit(1);
   }
 }
+
+// ─── Manejo de errores no capturados ──────────────────────────────────────────
+// Sin estos handlers, una excepción o rejection no capturada termina el proceso
+// silenciosamente sin log estructurado, dificultando el diagnóstico.
+
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught exception — proceso termina', { message: err.message, stack: err.stack });
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled rejection — proceso termina', { reason });
+  process.exit(1);
+});
 
 start();

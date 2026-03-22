@@ -117,3 +117,45 @@ export async function setClientActive(id: string, activo: boolean): Promise<Clie
   );
   return result.rows[0] ?? null;
 }
+
+export type DeleteClientResult = 'deleted' | 'not_found' | 'has_active_users';
+
+/**
+ * Elimina un cliente solo si no tiene usuarios activos.
+ * El check y el delete ocurren dentro de una transacción para evitar
+ * la race condition de leer "0 usuarios" y que alguien cree uno entre
+ * el check y el delete.
+ */
+export async function deleteClient(id: string): Promise<DeleteClientResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const check = await client.query(
+      `SELECT COUNT(u.id)::int AS active_users
+       FROM clientes c
+       LEFT JOIN usuarios u ON u.cliente_id = c.id AND u.activo = TRUE
+       WHERE c.id = $1
+       GROUP BY c.id`,
+      [id]
+    );
+
+    if (check.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return 'not_found';
+    }
+    if (check.rows[0].active_users > 0) {
+      await client.query('ROLLBACK');
+      return 'has_active_users';
+    }
+
+    await client.query(`DELETE FROM clientes WHERE id = $1`, [id]);
+    await client.query('COMMIT');
+    return 'deleted';
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}

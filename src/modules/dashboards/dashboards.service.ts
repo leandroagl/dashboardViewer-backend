@@ -13,8 +13,29 @@ export type DashboardType = "servers" | "backups" | "networking" | "windows" | "
 const CACHE_TTL_MS = 55_000;
 
 // Último "Last Job Run" conocido por sensor — persiste entre ciclos de cache
-// para evitar mostrar "—" en los ciclos donde PRTG rechaza temporalmente el acceso a canales
-const lastKnownJobRun = new Map<number, string>();
+// para evitar mostrar "—" en los ciclos donde PRTG rechaza temporalmente el acceso a canales.
+// Se almacena con timestamp para poder expirar entradas y evitar crecimiento indefinido.
+const LAST_JOB_RUN_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+const lastKnownJobRun = new Map<number, { value: string; updatedAt: number }>();
+
+function setLastJobRun(sensorId: number, value: string): void {
+  // Eliminar entradas expiradas antes de agregar la nueva
+  const cutoff = Date.now() - LAST_JOB_RUN_TTL_MS;
+  for (const [id, entry] of lastKnownJobRun) {
+    if (entry.updatedAt < cutoff) lastKnownJobRun.delete(id);
+  }
+  lastKnownJobRun.set(sensorId, { value, updatedAt: Date.now() });
+}
+
+function getLastJobRun(sensorId: number): string | undefined {
+  const entry = lastKnownJobRun.get(sensorId);
+  if (!entry) return undefined;
+  if (Date.now() - entry.updatedAt > LAST_JOB_RUN_TTL_MS) {
+    lastKnownJobRun.delete(sensorId);
+    return undefined;
+  }
+  return entry.value;
+}
 
 // ─── Mapeo grupo PRTG → dashboard ────────────────────────────────────────────
 const GROUP_MAP: { pattern: RegExp; type: DashboardType }[] = [
@@ -114,7 +135,7 @@ export interface VmwareDashboard {
 }
 
 export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<VmwareDashboard> {
-  const cacheKey = `vmware:${prtgGroup}`;
+  const cacheKey = `vmware:${[prtgGroup, ...extraProbes].sort().join(",")}`;
   const cached = getCached<VmwareDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -295,7 +316,7 @@ export interface BackupsDashboard {
 }
 
 export async function getBackupsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<BackupsDashboard> {
-  const cacheKey = `backups:${prtgGroup}`;
+  const cacheKey = `backups:${[prtgGroup, ...extraProbes].sort().join(",")}`;
   const cached = getCached<BackupsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -356,12 +377,12 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
         const isVeeamSensor = veeamChannelsById.has(s.objid);
         const jobChannels   = veeamChannelsById.get(s.objid);
         const lastRunValue  = jobChannels?.find(c => /last.?job.?run/i.test(c.name))?.lastvalue;
-        if (lastRunValue) lastKnownJobRun.set(s.objid, lastRunValue);
+        if (lastRunValue) setLastJobRun(s.objid, lastRunValue);
         return {
           name:        s.name,
           lastStatus:  normalizePrtgStatus(s.status_raw),
           lastMessage: s.message,
-          lastValue:   isVeeamSensor ? (lastKnownJobRun.get(s.objid) ?? '') : s.lastvalue,
+          lastValue:   isVeeamSensor ? (getLastJobRun(s.objid) ?? '') : s.lastvalue,
           freeGb,
           totalGb,
         };
@@ -423,7 +444,7 @@ function buildNetworkDevices(sensors: PrtgSensor[]): NetworkDevice[] {
 }
 
 export async function getNetworkingDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<NetworkingDashboard> {
-  const cacheKey = `networking:${prtgGroup}`;
+  const cacheKey = `networking:${[prtgGroup, ...extraProbes].sort().join(",")}`;
   const cached = getCached<NetworkingDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -463,7 +484,7 @@ export interface WindowsDashboard {
 }
 
 export async function getWindowsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<WindowsDashboard> {
-  const cacheKey = `windows:${prtgGroup}`;
+  const cacheKey = `windows:${[prtgGroup, ...extraProbes].sort().join(",")}`;
   const cached = getCached<WindowsDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 
@@ -543,7 +564,7 @@ export interface SucursalesDashboard {
 }
 
 export async function getSucursalesDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<SucursalesDashboard> {
-  const cacheKey = `sucursales:${prtgGroup}`;
+  const cacheKey = `sucursales:${[prtgGroup, ...extraProbes].sort().join(",")}`;
   const cached = getCached<SucursalesDashboard>(cacheKey, CACHE_TTL_MS);
   if (cached) return cached;
 

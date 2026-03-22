@@ -12,8 +12,9 @@ export const pool = new Pool({
   user:     env.db.user,
   password: env.db.password,
   max:      10,              // Máximo de conexiones concurrentes
-  idleTimeoutMillis:  30000,
-  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis:       30_000,
+  connectionTimeoutMillis:  5_000,
+  statement_timeout:       30_000, // Abortar queries que tarden más de 30s
 });
 
 // Log de errores inesperados en el pool (ej: caída de BD)
@@ -24,6 +25,10 @@ pool.on('error', (err) => {
 // Función de prueba de conexión al iniciar
 export async function testDatabaseConnection(): Promise<void> {
   const client = await pool.connect();
-  client.release();
-  logger.info('Conexión a PostgreSQL establecida correctamente');
+  try {
+    await client.query('SELECT 1');
+    logger.info('Conexión a PostgreSQL establecida correctamente');
+  } finally {
+    client.release();
+  }
 }

@@ -7,7 +7,6 @@ import { AuditAction, AuditResult } from '../../types';
 import { sendOk, sendError, sendServerError } from '../../utils/response';
 import { logger } from '../../utils/logger';
 import * as ClientsService from './clients.service';
-import { pool } from '../../config/database/pool';
 
 // ─── Validadores ──────────────────────────────────────────────────────────────
 
@@ -137,18 +136,14 @@ export async function deleteClientHandler(req: Request, res: Response): Promise<
   const ip = getClientIp(req);
   try {
     const { id } = req.params;
-    // Verificar que no tenga usuarios activos
-    const check = await pool.query(
-      `SELECT COUNT(*)::int as total FROM usuarios WHERE cliente_id = $1 AND activo = TRUE`,
-      [id]
-    );
-    if (check.rows[0].total > 0) {
-      sendError(res, 400, 'No se puede eliminar un cliente con usuarios activos.');
+    const outcome = await ClientsService.deleteClient(id);
+
+    if (outcome === 'not_found') {
+      sendError(res, 404, 'Cliente no encontrado.');
       return;
     }
-    const result = await pool.query(`DELETE FROM clientes WHERE id = $1`, [id]);
-    if ((result.rowCount ?? 0) === 0) {
-      sendError(res, 404, 'Cliente no encontrado.');
+    if (outcome === 'has_active_users') {
+      sendError(res, 400, 'No se puede eliminar un cliente con usuarios activos.');
       return;
     }
 
