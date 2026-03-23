@@ -22,7 +22,7 @@ jest.mock('../config/env', () => ({
 
 import { extractChannelValues } from '../modules/dashboards/dashboards.service';
 import { getSensorsByGroup, getSensorChannels, getHistoricData } from '../modules/prtg/prtg.client';
-import { getVmwareDashboard, getBackupsDashboard } from '../modules/dashboards/dashboards.service';
+import { getVmwareDashboard, getBackupsDashboard, getWindowsDashboard } from '../modules/dashboards/dashboards.service';
 import { invalidateCache } from '../utils/cache';
 
 const mockGetSensors  = getSensorsByGroup as jest.MockedFunction<typeof getSensorsByGroup>;
@@ -135,5 +135,38 @@ describe('BackupsDashboard sparklines', () => {
       objid: 200,
       values: [1, 1, 0, 1, 1, 1, 1],
     });
+  });
+});
+
+describe('WindowsDashboard uptimeAvgHours', () => {
+  beforeEach(() => { jest.clearAllMocks(); invalidateCache('windows:ONDRA'); });
+
+  test('calcula el promedio de uptime desde los valores de los sensores', async () => {
+    mockGetSensors.mockResolvedValue([
+      { objid: 301, name: 'CPU',    device: 'SRV01', group: 'Windows Server', probe: 'ONDRA', status: 'Up', status_raw: 3, lastvalue: '45 %',  message: 'OK', tags: '' },
+      { objid: 302, name: 'Memory', device: 'SRV01', group: 'Windows Server', probe: 'ONDRA', status: 'Up', status_raw: 3, lastvalue: '60 %',  message: 'OK', tags: '' },
+      { objid: 303, name: 'Disk',   device: 'SRV01', group: 'Windows Server', probe: 'ONDRA', status: 'Up', status_raw: 3, lastvalue: '70 %',  message: 'OK', tags: '' },
+      { objid: 304, name: 'Uptime', device: 'SRV01', group: 'Windows Server', probe: 'ONDRA', status: 'Up', status_raw: 3, lastvalue: '120 h', message: 'OK', tags: '' },
+      { objid: 311, name: 'CPU',    device: 'SRV02', group: 'Windows Server', probe: 'ONDRA', status: 'Up', status_raw: 3, lastvalue: '30 %',  message: 'OK', tags: '' },
+      { objid: 314, name: 'Uptime', device: 'SRV02', group: 'Windows Server', probe: 'ONDRA', status: 'Up', status_raw: 3, lastvalue: '48 h',  message: 'OK', tags: '' },
+    ]);
+    mockGetChannels.mockResolvedValue([]);
+    mockGetHistoric.mockResolvedValue([]);
+
+    const result = await getWindowsDashboard('ONDRA');
+    // (120 + 48) / 2 = 84
+    expect(result.uptimeAvgHours).toBe(84);
+  });
+
+  test('uptimeAvgHours es 0 cuando no hay sensores de uptime', async () => {
+    mockGetSensors.mockResolvedValue([{
+      objid: 301, name: 'CPU', device: 'SRV01', group: 'Windows Server', probe: 'ONDRA',
+      status: 'Up', status_raw: 3, lastvalue: '45 %', message: 'OK', tags: '',
+    }]);
+    mockGetChannels.mockResolvedValue([]);
+    mockGetHistoric.mockResolvedValue([]);
+
+    const result = await getWindowsDashboard('ONDRA');
+    expect(result.uptimeAvgHours).toBe(0);
   });
 });

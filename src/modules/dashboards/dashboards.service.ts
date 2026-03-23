@@ -567,6 +567,19 @@ export async function getNetworkingDashboard(prtgGroup: string, extraProbes: str
   return result;
 }
 
+/**
+ * Parsea el string de uptime de PRTG a horas numéricas.
+ * Formatos soportados: "5 d 3 h 15 min", "127 h", "3 d", "N/A".
+ */
+function parseUptimeHours(val: string): number {
+  let hours = 0;
+  const days = val.match(/(\d+(?:\.\d+)?)\s*d/i);
+  const hrs  = val.match(/(\d+(?:\.\d+)?)\s*h/i);
+  if (days) hours += parseFloat(days[1]) * 24;
+  if (hrs)  hours += parseFloat(hrs[1]);
+  return hours;
+}
+
 // ─── Dashboard: Windows Server ────────────────────────────────────────────────
 export interface WindowsServer {
   name:   string;
@@ -578,8 +591,10 @@ export interface WindowsServer {
 }
 
 export interface WindowsDashboard {
-  servers: WindowsServer[];
-  alerts:  { name: string; message: string; status: SensorStatus }[];
+  servers:        WindowsServer[];
+  alerts:         { name: string; message: string; status: SensorStatus }[];
+  sparklines:     SparklineMap; // keys: "<serverName>/cpu", "/ram", "/diskFree"
+  uptimeAvgHours: number;      // promedio de uptime en horas entre todos los servidores
 }
 
 export async function getWindowsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<WindowsDashboard> {
@@ -643,7 +658,34 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
     .map((s) => ({ name: `${s.device} — ${s.name}`, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-  const result: WindowsDashboard = { servers, alerts };
+  // Sparklines: un fetch por sensor (cpu/memory/disk son sensores independientes)
+  const cpuEntries  = [...serverMap.entries()].filter(([, d]) => d.cpu);
+  const memEntries  = [...serverMap.entries()].filter(([, d]) => d.memory);
+  const diskSEntries = [...serverMap.entries()].filter(([, d]) => d.disk);
+
+  const [cpuSparkResults, memSparkResults, diskSparkResults] = await Promise.all([
+    Promise.all(cpuEntries.map(([, d])  => getHistoricData(d.cpu!.objid,    '1h').catch(() => [] as PrtgHistoricPoint[]))),
+    Promise.all(memEntries.map(([, d])  => getHistoricData(d.memory!.objid, '1h').catch(() => [] as PrtgHistoricPoint[]))),
+    Promise.all(diskSEntries.map(([, d]) => getHistoricData(d.disk!.objid,   '1h').catch(() => [] as PrtgHistoricPoint[]))),
+  ]);
+
+  const sparklines: SparklineMap = {};
+  cpuEntries.forEach(([name, d], i) => {
+    sparklines[`${name}/cpu`] = { objid: d.cpu!.objid, values: extractChannelValues(cpuSparkResults[i]).slice(-12) };
+  });
+  memEntries.forEach(([name, d], i) => {
+    sparklines[`${name}/ram`] = { objid: d.memory!.objid, values: extractChannelValues(memSparkResults[i]).slice(-12) };
+  });
+  diskSEntries.forEach(([name, d], i) => {
+    sparklines[`${name}/diskFree`] = { objid: d.disk!.objid, values: extractChannelValues(diskSparkResults[i]).slice(-12) };
+  });
+
+  // uptimeAvgHours: promedio de horas de uptime de todos los servidores
+  const uptimeSensors = [...serverMap.values()].filter(d => d.uptime);
+  const uptimeAvgHours = uptimeSensors.length === 0 ? 0 :
+    Math.round(uptimeSensors.reduce((sum, d) => sum + parseUptimeHours(d.uptime!.lastvalue), 0) / uptimeSensors.length);
+
+  const result: WindowsDashboard = { servers, alerts, sparklines, uptimeAvgHours };
   setCache(cacheKey, result);
   return result;
 }
