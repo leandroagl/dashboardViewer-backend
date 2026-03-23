@@ -702,6 +702,7 @@ export interface SucursalesDashboard {
   onlineCount:  number;
   offlineCount: number;
   alerts:       { name: string; message: string; status: SensorStatus }[];
+  sparklines:   SparklineMap; // keys: "<sucursalName>/latency"
 }
 
 export async function getSucursalesDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<SucursalesDashboard> {
@@ -744,7 +745,28 @@ export async function getSucursalesDashboard(prtgGroup: string, extraProbes: str
     .filter(s => [4, 5, 13, 14].includes(s.status_raw))
     .map(s => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-  const result: SucursalesDashboard = { sucursales, onlineCount, offlineCount, alerts };
+  // Sparklines de latencia: un fetch por sucursal (sensor de ping)
+  const sucursalEntries = [...deviceMap.entries()];
+  const sparklineResults = await Promise.all(
+    sucursalEntries.map(([, deviceSensors]) => {
+      const ping = deviceSensors.find(s => /ping/i.test(s.name)) ?? deviceSensors[0];
+      return ping
+        ? getHistoricData(ping.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+        : Promise.resolve([] as PrtgHistoricPoint[]);
+    })
+  );
+
+  const sparklines: SparklineMap = {};
+  sucursalEntries.forEach(([name, deviceSensors], i) => {
+    const ping = deviceSensors.find(s => /ping/i.test(s.name)) ?? deviceSensors[0];
+    if (!ping) return;
+    sparklines[`${name}/latency`] = {
+      objid:  ping.objid,
+      values: extractChannelValues(sparklineResults[i]).slice(-12),
+    };
+  });
+
+  const result: SucursalesDashboard = { sucursales, onlineCount, offlineCount, alerts, sparklines };
   setCache(cacheKey, result);
   return result;
 }
