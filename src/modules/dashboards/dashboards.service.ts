@@ -134,6 +134,11 @@ export type SparklineMap = Record<string, SparklineEntry>;
  * con channelPattern. Si no se especifica patrón, usa el primero disponible.
  * Retorna solo los valores numéricos, omitiendo puntos sin dato.
  */
+// Con usecaption=1, PRTG devuelve las keys directamente como nombre de canal
+// (ej. "CPU usage", "Disk read") sin prefijo "value_raw (...)".
+// Excluimos "datetime" y "coverage" que son metadatos, no métricas.
+const HISTDATA_SKIP_KEYS = new Set(['datetime', 'coverage']);
+
 export function extractChannelValues(
   histdata:       PrtgHistoricPoint[],
   channelPattern: RegExp = /.*/,
@@ -141,7 +146,8 @@ export function extractChannelValues(
   const values: number[] = [];
   for (const point of histdata) {
     for (const [key, val] of Object.entries(point)) {
-      if (key.startsWith('value_raw') && channelPattern.test(key) && typeof val === 'number') {
+      if (HISTDATA_SKIP_KEYS.has(key)) continue;
+      if (channelPattern.test(key) && typeof val === 'number') {
         values.push(val);
         break;
       }
@@ -207,10 +213,10 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
       getSensorChannels(s.objid).catch(() => null)
     )),
     Promise.all(hostPerfSensors.map(s =>
-      s ? getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[]) : Promise.resolve([] as PrtgHistoricPoint[])
+      s ? getHistoricData(s.objid, '24h').catch(() => [] as PrtgHistoricPoint[]) : Promise.resolve([] as PrtgHistoricPoint[])
     )),
     Promise.all(allDatastoreSensors.map(s =>
-      getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+      getHistoricData(s.objid, '24h').catch(() => [] as PrtgHistoricPoint[])
     )),
   ]);
 
@@ -543,7 +549,7 @@ export async function getNetworkingDashboard(prtgGroup: string, extraProbes: str
 
   const netSparklineResults = await Promise.all(
     netSensors.map(s =>
-      getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+      getHistoricData(s.objid, '24h').catch(() => [] as PrtgHistoricPoint[])
     )
   );
 
@@ -665,9 +671,9 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
   const diskSEntries = [...serverMap.entries()].filter(([, d]) => d.disk);
 
   const [cpuSparkResults, memSparkResults, diskSparkResults] = await Promise.all([
-    Promise.all(cpuEntries.map(([, d])  => getHistoricData(d.cpu!.objid,    '1h').catch(() => [] as PrtgHistoricPoint[]))),
-    Promise.all(memEntries.map(([, d])  => getHistoricData(d.memory!.objid, '1h').catch(() => [] as PrtgHistoricPoint[]))),
-    Promise.all(diskSEntries.map(([, d]) => getHistoricData(d.disk!.objid,   '1h').catch(() => [] as PrtgHistoricPoint[]))),
+    Promise.all(cpuEntries.map(([, d])  => getHistoricData(d.cpu!.objid,    '24h').catch(() => [] as PrtgHistoricPoint[]))),
+    Promise.all(memEntries.map(([, d])  => getHistoricData(d.memory!.objid, '24h').catch(() => [] as PrtgHistoricPoint[]))),
+    Promise.all(diskSEntries.map(([, d]) => getHistoricData(d.disk!.objid,   '24h').catch(() => [] as PrtgHistoricPoint[]))),
   ]);
 
   const sparklines: SparklineMap = {};
@@ -752,7 +758,7 @@ export async function getSucursalesDashboard(prtgGroup: string, extraProbes: str
     sucursalEntries.map(([, deviceSensors]) => {
       const ping = deviceSensors.find(s => /ping/i.test(s.name)) ?? deviceSensors[0];
       return ping
-        ? getHistoricData(ping.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+        ? getHistoricData(ping.objid, '24h').catch(() => [] as PrtgHistoricPoint[])
         : Promise.resolve([] as PrtgHistoricPoint[]);
     })
   );
@@ -775,8 +781,8 @@ export async function getSucursalesDashboard(prtgGroup: string, extraProbes: str
 // ─── Endpoint de historial: tipos y función de servicio ───────────────────────
 
 export interface HistoryPoint {
-  timestamp: string; // ISO 8601
-  value:     number;
+  datetime: string; // ISO 8601
+  value:    number;
 }
 
 export interface HistoryStats {
@@ -812,11 +818,18 @@ function computeStats(values: number[]): { max: number; avg: number; min: number
   return { max, avg, min };
 }
 
+const CHANNEL_PATTERNS: Record<string, RegExp> = {
+  cpu:   /cpu/i,
+  ram:   /memory/i,
+  diskR: /disk.*read|read/i,
+  diskW: /disk.*write|write/i,
+};
+
 /**
  * Obtiene datos históricos de un sensor PRTG con estadísticas del período actual
  * y del período previo (para calcular deltas en KPI cards).
  */
-export async function getHistoryData(objid: number, range: HistoryRange): Promise<HistoryData> {
+export async function getHistoryData(objid: number, range: HistoryRange, channel = ''): Promise<HistoryData> {
   const now     = new Date();
   const cfg     = RANGE_CONFIG[range];
   const prevEnd = new Date(now.getTime() - cfg.hours * 3_600_000);
@@ -827,15 +840,17 @@ export async function getHistoryData(objid: number, range: HistoryRange): Promis
     getSensorDetail(objid),
   ]);
 
-  const currentValues = extractChannelValues(currentHistdata);
-  const prevValues    = extractChannelValues(prevHistdata);
+  const channelPattern = (channel && CHANNEL_PATTERNS[channel]) ? CHANNEL_PATTERNS[channel] : /.*/;
+
+  const currentValues = extractChannelValues(currentHistdata, channelPattern);
+  const prevValues    = extractChannelValues(prevHistdata, channelPattern);
 
   const points: HistoryPoint[] = currentHistdata
     .map(p => {
-      const value = extractChannelValues([p])[0];
+      const value = extractChannelValues([p], channelPattern)[0];
       if (value === undefined) return null;
       // PRTG datetime format is "22.03.2026 10:00:00" (German locale) — NOT parseable by new Date().
-      return { timestamp: parsePrtgDatetime(p.datetime as string), value };
+      return { datetime: parsePrtgDatetime(p.datetime as string), value };
     })
     .filter((p): p is HistoryPoint => p !== null);
 

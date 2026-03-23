@@ -63,7 +63,7 @@ interface PrtgHistoricResponse {
 
 // Exported so dashboards.service.ts can reuse it for getHistoryData
 export const RANGE_CONFIG: Record<HistoryRange, { avg: number; hours: number }> = {
-  '1h':  { avg: 300,   hours: 1   },
+  '1h':  { avg: 0,     hours: 1   },
   '24h': { avg: 3600,  hours: 24  },
   '7d':  { avg: 86400, hours: 168 },
   '30d': { avg: 86400, hours: 720 },
@@ -177,7 +177,8 @@ async function prtgGet<T>(
   try {
     return JSON.parse(text) as T;
   } catch {
-    logger.error("PRTG JSON parse error", { preview: text.slice(0, 300) });
+    const logFn = quiet ? logger.debug : logger.error;
+    logFn("PRTG JSON parse error", { preview: text.slice(0, 300) });
     throw new Error("PRTG devolvió una respuesta no-JSON");
   }
 }
@@ -293,14 +294,21 @@ export async function getHistoricData(
 
   try {
     const result = await prtgGet<PrtgHistoricResponse>('/api/historicdata.json', {
-      id:    String(objid),
-      avg:   String(cfg.avg),
-      sdate: prtgDateStr(sdate),
-      edate: prtgDateStr(edate),
+      id:         String(objid),
+      avg:        String(cfg.avg),
+      sdate:      prtgDateStr(sdate),
+      edate:      prtgDateStr(edate),
+      usecaption: '1',
     }, true);
     return result.histdata ?? [];
   } catch (err: unknown) {
-    logger.warn("PRTG historicdata fetch failed", { objid, range, error: (err as Error).message });
+    const msg = (err as Error).message ?? '';
+    // "no-JSON" = PRTG devolvió "Not enough monitoring data" — estado esperado para sensores nuevos
+    if (msg === 'PRTG devolvió una respuesta no-JSON') {
+      logger.debug("PRTG historicdata: sensor sin datos suficientes", { objid, range });
+    } else {
+      logger.warn("PRTG historicdata fetch failed", { objid, range, error: msg });
+    }
     return [];
   }
 }
