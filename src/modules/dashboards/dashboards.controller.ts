@@ -190,6 +190,7 @@ export async function getHistory(req: Request, res: Response): Promise<void> {
     if (!access) return;
 
     const { objid: objidStr, range } = req.query as Record<string, string | undefined>;
+    const channel = typeof req.query.channel === 'string' ? req.query.channel : '';
 
     const objid = Number(objidStr);
     if (!objidStr || !Number.isInteger(objid) || objid <= 0) {
@@ -201,7 +202,7 @@ export async function getHistory(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    const data = await DashboardsService.getHistoryData(objid, range as import('../prtg/prtg.client').HistoryRange);
+    const data = await DashboardsService.getHistoryData(objid, range as import('../prtg/prtg.client').HistoryRange, channel);
 
     await audit({
       usuario_id: req.user!.sub,
