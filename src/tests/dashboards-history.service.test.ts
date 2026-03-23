@@ -22,7 +22,7 @@ jest.mock('../config/env', () => ({
 
 import { extractChannelValues } from '../modules/dashboards/dashboards.service';
 import { getSensorsByGroup, getSensorChannels, getHistoricData } from '../modules/prtg/prtg.client';
-import { getVmwareDashboard, getBackupsDashboard, getWindowsDashboard } from '../modules/dashboards/dashboards.service';
+import { getVmwareDashboard, getBackupsDashboard, getWindowsDashboard, getSucursalesDashboard } from '../modules/dashboards/dashboards.service';
 import { invalidateCache } from '../utils/cache';
 
 const mockGetSensors  = getSensorsByGroup as jest.MockedFunction<typeof getSensorsByGroup>;
@@ -168,5 +168,32 @@ describe('WindowsDashboard uptimeAvgHours', () => {
 
     const result = await getWindowsDashboard('ONDRA');
     expect(result.uptimeAvgHours).toBe(0);
+  });
+});
+
+describe('SucursalesDashboard sparklines', () => {
+  beforeEach(() => { jest.clearAllMocks(); invalidateCache('sucursales:ONDRA'); });
+
+  test('incluye sparklines con objid y values de latencia por sucursal', async () => {
+    mockGetSensors.mockResolvedValue([
+      { objid: 500, name: 'Ping', device: 'Sucursal Centro', group: 'Sucursales', probe: 'ONDRA',
+        status: 'Up', status_raw: 3, lastvalue: '12 ms', message: 'OK', tags: '' },
+    ]);
+    mockGetHistoric.mockResolvedValue([
+      { datetime: '...', 'value_raw (Ping Time)': 10 },
+      { datetime: '...', 'value_raw (Ping Time)': 12 },
+    ]);
+
+    const result = await getSucursalesDashboard('ONDRA');
+    expect(result.sparklines['Sucursal Centro/latency']).toEqual({
+      objid: 500,
+      values: [10, 12],
+    });
+  });
+
+  test('sparklines es {} cuando no hay sensores', async () => {
+    mockGetSensors.mockResolvedValue([]);
+    const result = await getSucursalesDashboard('ONDRA');
+    expect(result.sparklines).toEqual({});
   });
 });

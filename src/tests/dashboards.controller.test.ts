@@ -19,7 +19,7 @@ jest.mock('../modules/dashboards/dashboards.service', () => ({
   getBackupsDashboard:    jest.fn().mockResolvedValue({ successRate7d: 0, devices: [], alerts: [] }),
   getNetworkingDashboard: jest.fn().mockResolvedValue({ devices: [], switches: [], ptpAntennas: [], alerts: [] }),
   getWindowsDashboard:    jest.fn().mockResolvedValue({ servers: [], alerts: [] }),
-  getSucursalesDashboard: jest.fn().mockResolvedValue({ sucursales: [], onlineCount: 0, offlineCount: 0, alerts: [] }),
+  getSucursalesDashboard: jest.fn().mockResolvedValue({ sucursales: [], onlineCount: 0, offlineCount: 0, alerts: [], sparklines: {} }),
 }));
 
 jest.mock('../middleware/auditLogger', () => ({
