@@ -4,6 +4,12 @@ jest.mock('../modules/prtg/prtg.client', () => ({
   getSensorChannels:  jest.fn(),
   getHistoricData:    jest.fn(),
   getSensorDetail:    jest.fn(),
+  RANGE_CONFIG: {
+    '1h':  { avg: 300,   hours: 1   },
+    '24h': { avg: 3600,  hours: 24  },
+    '7d':  { avg: 86400, hours: 168 },
+    '30d': { avg: 86400, hours: 720 },
+  },
 }));
 
 jest.mock('../config/env', () => ({
@@ -195,5 +201,53 @@ describe('SucursalesDashboard sparklines', () => {
     mockGetSensors.mockResolvedValue([]);
     const result = await getSucursalesDashboard('ONDRA');
     expect(result.sparklines).toEqual({});
+  });
+});
+
+import { getSensorDetail } from '../modules/prtg/prtg.client';
+import { getHistoryData } from '../modules/dashboards/dashboards.service';
+
+const mockGetDetail = getSensorDetail as jest.MockedFunction<typeof getSensorDetail>;
+
+describe('getHistoryData', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test('retorna points con timestamp ISO y calcula stats correctamente', async () => {
+    mockGetDetail.mockResolvedValue({ name: 'CPU ESX01', statustext: 'Up', lastvalue: '23 %', message: 'OK' });
+    // Período actual
+    mockGetHistoric
+      .mockResolvedValueOnce([
+        { datetime: '22.03.2026 10:00:00', 'value_raw (CPU Usage)': 20 },
+        { datetime: '22.03.2026 11:00:00', 'value_raw (CPU Usage)': 40 },
+        { datetime: '22.03.2026 12:00:00', 'value_raw (CPU Usage)': 30 },
+      ])
+      // Período previo
+      .mockResolvedValueOnce([
+        { datetime: '22.03.2026 07:00:00', 'value_raw (CPU Usage)': 15 },
+        { datetime: '22.03.2026 08:00:00', 'value_raw (CPU Usage)': 25 },
+        { datetime: '22.03.2026 09:00:00', 'value_raw (CPU Usage)': 20 },
+      ]);
+
+    const result = await getHistoryData(1234, '24h');
+
+    expect(result.points).toHaveLength(3);
+    expect(result.points[0].value).toBe(20);
+    expect(result.stats.max).toBe(40);
+    expect(result.stats.avg).toBe(30);
+    expect(result.stats.min).toBe(20);
+    expect(result.stats.prevMax).toBe(25);
+    expect(result.stats.prevAvg).toBeCloseTo(20, 0);
+    expect(result.stats.prevMin).toBe(15);
+  });
+
+  test('retorna points vacíos y stats cero cuando PRTG no devuelve datos', async () => {
+    mockGetDetail.mockResolvedValue(null);
+    mockGetHistoric.mockResolvedValue([]);
+
+    const result = await getHistoryData(9999, '1h');
+
+    expect(result.points).toEqual([]);
+    expect(result.stats).toEqual({ max: 0, avg: 0, min: 0, prevMax: 0, prevAvg: 0, prevMin: 0 });
+    expect(result.sensorName).toBe('Sensor 9999');
   });
 });

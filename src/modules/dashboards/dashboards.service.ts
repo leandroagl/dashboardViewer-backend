@@ -8,6 +8,7 @@ import {
   getSensorsByGroup,
   getSensorChannels,
   getHistoricData,
+  getSensorDetail,
 } from "../prtg/prtg.client";
 import { logger } from "../../utils/logger";
 import { getCached, setCache } from "../../utils/cache";
@@ -769,4 +770,90 @@ export async function getSucursalesDashboard(prtgGroup: string, extraProbes: str
   const result: SucursalesDashboard = { sucursales, onlineCount, offlineCount, alerts, sparklines };
   setCache(cacheKey, result);
   return result;
+}
+
+// ─── Endpoint de historial: tipos y función de servicio ───────────────────────
+
+export interface HistoryPoint {
+  timestamp: string; // ISO 8601
+  value:     number;
+}
+
+export interface HistoryStats {
+  max:     number; avg: number; min: number;
+  prevMax: number; prevAvg: number; prevMin: number;
+}
+
+export interface HistoryData {
+  objid:      number;
+  sensorName: string;
+  range:      HistoryRange;
+  points:     HistoryPoint[];
+  stats:      HistoryStats;
+}
+
+/**
+ * Parsea el formato de fecha PRTG "DD.MM.YYYY HH:MM:SS" a ISO 8601.
+ * new Date() no puede parsear el formato de PRTG directamente en Node.js.
+ */
+function parsePrtgDatetime(prtgDate: string): string {
+  // Format: "22.03.2026 10:00:00"
+  const clean = prtgDate.replace(/\s*(AM|PM)\s*[+-]\d{4}$/i, '').trim();
+  const [datePart, timePart] = clean.split(' ');
+  const [day, month, year]   = datePart.split('.');
+  return new Date(`${year}-${month}-${day}T${timePart ?? '00:00:00'}Z`).toISOString();
+}
+
+function computeStats(values: number[]): { max: number; avg: number; min: number } {
+  if (values.length === 0) return { max: 0, avg: 0, min: 0 };
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const avg = Math.round((values.reduce((s, v) => s + v, 0) / values.length) * 10) / 10;
+  return { max, avg, min };
+}
+
+/**
+ * Obtiene datos históricos de un sensor PRTG con estadísticas del período actual
+ * y del período previo (para calcular deltas en KPI cards).
+ */
+export async function getHistoryData(objid: number, range: HistoryRange): Promise<HistoryData> {
+  const now     = new Date();
+  const cfg     = RANGE_CONFIG[range];
+  const prevEnd = new Date(now.getTime() - cfg.hours * 3_600_000);
+
+  const [currentHistdata, prevHistdata, sensorDetail] = await Promise.all([
+    getHistoricData(objid, range, now),
+    getHistoricData(objid, range, prevEnd),
+    getSensorDetail(objid),
+  ]);
+
+  const currentValues = extractChannelValues(currentHistdata);
+  const prevValues    = extractChannelValues(prevHistdata);
+
+  const points: HistoryPoint[] = currentHistdata
+    .map(p => {
+      const value = extractChannelValues([p])[0];
+      if (value === undefined) return null;
+      // PRTG datetime format is "22.03.2026 10:00:00" (German locale) — NOT parseable by new Date().
+      return { timestamp: parsePrtgDatetime(p.datetime as string), value };
+    })
+    .filter((p): p is HistoryPoint => p !== null);
+
+  const currentStats = computeStats(currentValues);
+  const prevStats    = computeStats(prevValues);
+
+  return {
+    objid,
+    sensorName: sensorDetail?.name ?? `Sensor ${objid}`,
+    range,
+    points,
+    stats: {
+      max:     currentStats.max,
+      avg:     currentStats.avg,
+      min:     currentStats.min,
+      prevMax: prevStats.max,
+      prevAvg: prevStats.avg,
+      prevMin: prevStats.min,
+    },
+  };
 }
