@@ -42,7 +42,7 @@ describe('GET /:clientSlug/dashboards/history', () => {
 
   const fakeHistory = {
     objid: 1234, sensorName: 'CPU ESX01', range: '24h' as const,
-    points: [{ timestamp: '2026-03-22T10:00:00.000Z', value: 23 }],
+    points: [{ datetime: '2026-03-22T10:00:00.000Z', value: 23 }],
     stats: { max: 40, avg: 28, min: 18, prevMax: 35, prevAvg: 24, prevMin: 15 },
   };
 
