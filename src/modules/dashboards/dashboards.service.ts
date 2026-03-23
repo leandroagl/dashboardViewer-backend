@@ -2,8 +2,13 @@
 import {
   PrtgSensor,
   PrtgChannel,
+  PrtgHistoricPoint,
+  HistoryRange,
+  RANGE_CONFIG,
   getSensorsByGroup,
   getSensorChannels,
+  getHistoricData,
+  getSensorDetail,
 } from "../prtg/prtg.client";
 import { logger } from "../../utils/logger";
 import { getCached, setCache } from "../../utils/cache";
@@ -115,6 +120,36 @@ function rawBytesToGb(raw: number | undefined): number | null {
   return Math.round(raw / (1024 * 1024 * 1024) * 10) / 10;
 }
 
+// ─── Tipos y helpers para sparklines ─────────────────────────────────────────
+
+export interface SparklineEntry {
+  objid:  number;
+  values: number[];
+}
+
+export type SparklineMap = Record<string, SparklineEntry>;
+
+/**
+ * Extrae valores numéricos de histdata PRTG para el canal que coincide
+ * con channelPattern. Si no se especifica patrón, usa el primero disponible.
+ * Retorna solo los valores numéricos, omitiendo puntos sin dato.
+ */
+export function extractChannelValues(
+  histdata:       PrtgHistoricPoint[],
+  channelPattern: RegExp = /.*/,
+): number[] {
+  const values: number[] = [];
+  for (const point of histdata) {
+    for (const [key, val] of Object.entries(point)) {
+      if (key.startsWith('value_raw') && channelPattern.test(key) && typeof val === 'number') {
+        values.push(val);
+        break;
+      }
+    }
+  }
+  return values;
+}
+
 // ─── Dashboard: Servidores VMware ─────────────────────────────────────────────
 export interface VmwareHost {
   name:       string;
@@ -130,8 +165,9 @@ export interface VmwareHost {
 }
 
 export interface VmwareDashboard {
-  hosts:  VmwareHost[];
-  alerts: { name: string; message: string; status: SensorStatus }[];
+  hosts:      VmwareHost[];
+  alerts:     { name: string; message: string; status: SensorStatus }[];
+  sparklines: SparklineMap; // keys: "<hostname>/cpu", "/ram", "/diskR", "/diskW", "/datastore"
 }
 
 export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<VmwareDashboard> {
@@ -162,15 +198,24 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
     ds.filter(s => /datastore\s*free/i.test(s.name))
   );
 
-  // Fetch de todos los canales en paralelo (un solo batch)
-  const [hostPerfChannelResults, dsChannelResults] = await Promise.all([
+  // Fetch de todos los canales e históricos en paralelo (un solo batch)
+  const [hostPerfChannelResults, dsChannelResults, hostPerfSparklineResults, dsSparklineResults] = await Promise.all([
     Promise.all(hostPerfSensors.map(s =>
       s ? getSensorChannels(s.objid).catch(() => null) : Promise.resolve(null)
     )),
     Promise.all(allDatastoreSensors.map(s =>
       getSensorChannels(s.objid).catch(() => null)
     )),
+    Promise.all(hostPerfSensors.map(s =>
+      s ? getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[]) : Promise.resolve([] as PrtgHistoricPoint[])
+    )),
+    Promise.all(allDatastoreSensors.map(s =>
+      getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+    )),
   ]);
+
+  const dsSparklineById = new Map<number, PrtgHistoricPoint[]>();
+  allDatastoreSensors.forEach((s, i) => dsSparklineById.set(s.objid, dsSparklineResults[i]));
 
   // Mapa de canales de datastore por objid
   const dsChannelsById = new Map<number, PrtgChannel[] | null>();
@@ -286,7 +331,24 @@ export async function getVmwareDashboard(prtgGroup: string, extraProbes: string[
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
     .map((s) => ({ name: `${s.device} — ${s.name}`, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-  const result: VmwareDashboard = { hosts, alerts: allAlerts };
+  const sparklines: SparklineMap = {};
+  deviceEntries.forEach(([device], i) => {
+    const perfSensor = hostPerfSensors[i];
+    if (!perfSensor) return;
+    const histdata = hostPerfSparklineResults[i];
+    const objid    = perfSensor.objid;
+    sparklines[`${device}/cpu`]   = { objid, values: extractChannelValues(histdata, /cpu\s*usage/i).slice(-12) };
+    sparklines[`${device}/ram`]   = { objid, values: extractChannelValues(histdata, /memory\s*consum/i).slice(-12) };
+    sparklines[`${device}/diskR`] = { objid, values: extractChannelValues(histdata, /disk.*read|read.*rate/i).slice(-12) };
+    sparklines[`${device}/diskW`] = { objid, values: extractChannelValues(histdata, /disk.*write|write.*rate/i).slice(-12) };
+  });
+  allDatastoreSensors.forEach(s => {
+    const histdata = dsSparklineById.get(s.objid) ?? [];
+    const device   = s.device || s.name;
+    sparklines[`${device}/datastore`] = { objid: s.objid, values: extractChannelValues(histdata).slice(-12) };
+  });
+
+  const result: VmwareDashboard = { hosts, alerts: allAlerts, sparklines };
   setCache(cacheKey, result);
   return result;
 }
@@ -313,6 +375,7 @@ export interface BackupsDashboard {
   successRate7d: number;
   devices:       BackupDevice[];
   alerts:        { name: string; message: string; status: SensorStatus }[];
+  sparklines:    SparklineMap; // keys: "<deviceName>/<jobName>" — últimos 7 resultados binarios
 }
 
 export async function getBackupsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<BackupsDashboard> {
@@ -341,10 +404,16 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
     !/^veeam backup job status$/i.test(s.name.trim())
   );
 
-  const [diskChannelResults, veeamChannelResults] = await Promise.all([
+  const [diskChannelResults, veeamChannelResults, jobSparklineResults] = await Promise.all([
     Promise.all(allLogicalDiskSensors.map(s => getSensorChannels(s.objid).catch(() => null))),
     Promise.all(veeamJobSensors.map(s => getSensorChannels(s.objid).catch(() => null))),
+    Promise.all(veeamJobSensors.map(s =>
+      getHistoricData(s.objid, '7d').catch(() => [] as PrtgHistoricPoint[])
+    )),
   ]);
+
+  const jobSparklineById = new Map<number, PrtgHistoricPoint[]>();
+  veeamJobSensors.forEach((s, i) => jobSparklineById.set(s.objid, jobSparklineResults[i]));
 
   const diskChannelsById = new Map<number, PrtgChannel[] | null>();
   allLogicalDiskSensors.forEach((s, i) => diskChannelsById.set(s.objid, diskChannelResults[i]));
@@ -403,7 +472,20 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
 
   const allAlerts = devices.flatMap(d => d.alerts);
 
-  const result: BackupsDashboard = { successRate7d, devices, alerts: allAlerts };
+  const sparklines: SparklineMap = {};
+  for (const device of devices) {
+    for (const job of device.jobs) {
+      const sensor = sensors.find(s => (s.device || s.name) === device.name && s.name === job.name);
+      if (!sensor) continue;
+      const histdata = jobSparklineById.get(sensor.objid) ?? [];
+      sparklines[`${device.name}/${job.name}`] = {
+        objid:  sensor.objid,
+        values: extractChannelValues(histdata).slice(-7),
+      };
+    }
+  }
+
+  const result: BackupsDashboard = { successRate7d, devices, alerts: allAlerts, sparklines };
   setCache(cacheKey, result);
   return result;
 }
@@ -420,6 +502,7 @@ export interface NetworkingDashboard {
   switches:    NetworkDevice[];
   ptpAntennas: NetworkDevice[];
   alerts:      { name: string; message: string; status: SensorStatus }[];
+  sparklines:  SparklineMap; // keys: "<deviceName>/<sensorName>" — solo sensores del array devices
 }
 
 function filterByLeafGroup(sensors: PrtgSensor[], leafPattern: RegExp): PrtgSensor[] {
@@ -458,14 +541,44 @@ export async function getNetworkingDashboard(prtgGroup: string, extraProbes: str
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
     .map((s) => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
+  const netSparklineResults = await Promise.all(
+    netSensors.map(s =>
+      getHistoricData(s.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+    )
+  );
+
+  const sparklines: SparklineMap = {};
+  netSensors.forEach((s, i) => {
+    const device = s.device || s.name;
+    const key    = `${device}/${s.name}`;
+    sparklines[key] = {
+      objid:  s.objid,
+      values: extractChannelValues(netSparklineResults[i]).slice(-12),
+    };
+  });
+
   const result: NetworkingDashboard = {
     devices:     buildNetworkDevices(netSensors),
     switches:    buildNetworkDevices(switchSensors),
     ptpAntennas: buildNetworkDevices(ptpSensors),
     alerts,
+    sparklines,
   };
   setCache(cacheKey, result);
   return result;
+}
+
+/**
+ * Parsea el string de uptime de PRTG a horas numéricas.
+ * Formatos soportados: "5 d 3 h 15 min", "127 h", "3 d", "N/A".
+ */
+function parseUptimeHours(val: string): number {
+  let hours = 0;
+  const days = val.match(/(\d+(?:\.\d+)?)\s*d/i);
+  const hrs  = val.match(/(\d+(?:\.\d+)?)\s*h/i);
+  if (days) hours += parseFloat(days[1]) * 24;
+  if (hrs)  hours += parseFloat(hrs[1]);
+  return hours;
 }
 
 // ─── Dashboard: Windows Server ────────────────────────────────────────────────
@@ -479,8 +592,10 @@ export interface WindowsServer {
 }
 
 export interface WindowsDashboard {
-  servers: WindowsServer[];
-  alerts:  { name: string; message: string; status: SensorStatus }[];
+  servers:        WindowsServer[];
+  alerts:         { name: string; message: string; status: SensorStatus }[];
+  sparklines:     SparklineMap; // keys: "<serverName>/cpu", "/ram", "/diskFree"
+  uptimeAvgHours: number;      // promedio de uptime en horas entre todos los servidores
 }
 
 export async function getWindowsDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<WindowsDashboard> {
@@ -544,7 +659,34 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
     .filter((s) => [4, 5, 13, 14].includes(s.status_raw))
     .map((s) => ({ name: `${s.device} — ${s.name}`, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-  const result: WindowsDashboard = { servers, alerts };
+  // Sparklines: un fetch por sensor (cpu/memory/disk son sensores independientes)
+  const cpuEntries  = [...serverMap.entries()].filter(([, d]) => d.cpu);
+  const memEntries  = [...serverMap.entries()].filter(([, d]) => d.memory);
+  const diskSEntries = [...serverMap.entries()].filter(([, d]) => d.disk);
+
+  const [cpuSparkResults, memSparkResults, diskSparkResults] = await Promise.all([
+    Promise.all(cpuEntries.map(([, d])  => getHistoricData(d.cpu!.objid,    '1h').catch(() => [] as PrtgHistoricPoint[]))),
+    Promise.all(memEntries.map(([, d])  => getHistoricData(d.memory!.objid, '1h').catch(() => [] as PrtgHistoricPoint[]))),
+    Promise.all(diskSEntries.map(([, d]) => getHistoricData(d.disk!.objid,   '1h').catch(() => [] as PrtgHistoricPoint[]))),
+  ]);
+
+  const sparklines: SparklineMap = {};
+  cpuEntries.forEach(([name, d], i) => {
+    sparklines[`${name}/cpu`] = { objid: d.cpu!.objid, values: extractChannelValues(cpuSparkResults[i]).slice(-12) };
+  });
+  memEntries.forEach(([name, d], i) => {
+    sparklines[`${name}/ram`] = { objid: d.memory!.objid, values: extractChannelValues(memSparkResults[i]).slice(-12) };
+  });
+  diskSEntries.forEach(([name, d], i) => {
+    sparklines[`${name}/diskFree`] = { objid: d.disk!.objid, values: extractChannelValues(diskSparkResults[i]).slice(-12) };
+  });
+
+  // uptimeAvgHours: promedio de horas de uptime de todos los servidores
+  const uptimeSensors = [...serverMap.values()].filter(d => d.uptime);
+  const uptimeAvgHours = uptimeSensors.length === 0 ? 0 :
+    Math.round(uptimeSensors.reduce((sum, d) => sum + parseUptimeHours(d.uptime!.lastvalue), 0) / uptimeSensors.length);
+
+  const result: WindowsDashboard = { servers, alerts, sparklines, uptimeAvgHours };
   setCache(cacheKey, result);
   return result;
 }
@@ -561,6 +703,7 @@ export interface SucursalesDashboard {
   onlineCount:  number;
   offlineCount: number;
   alerts:       { name: string; message: string; status: SensorStatus }[];
+  sparklines:   SparklineMap; // keys: "<sucursalName>/latency"
 }
 
 export async function getSucursalesDashboard(prtgGroup: string, extraProbes: string[] = []): Promise<SucursalesDashboard> {
@@ -603,7 +746,114 @@ export async function getSucursalesDashboard(prtgGroup: string, extraProbes: str
     .filter(s => [4, 5, 13, 14].includes(s.status_raw))
     .map(s => ({ name: s.name, message: s.message, status: normalizePrtgStatus(s.status_raw) }));
 
-  const result: SucursalesDashboard = { sucursales, onlineCount, offlineCount, alerts };
+  // Sparklines de latencia: un fetch por sucursal (sensor de ping)
+  const sucursalEntries = [...deviceMap.entries()];
+  const sparklineResults = await Promise.all(
+    sucursalEntries.map(([, deviceSensors]) => {
+      const ping = deviceSensors.find(s => /ping/i.test(s.name)) ?? deviceSensors[0];
+      return ping
+        ? getHistoricData(ping.objid, '1h').catch(() => [] as PrtgHistoricPoint[])
+        : Promise.resolve([] as PrtgHistoricPoint[]);
+    })
+  );
+
+  const sparklines: SparklineMap = {};
+  sucursalEntries.forEach(([name, deviceSensors], i) => {
+    const ping = deviceSensors.find(s => /ping/i.test(s.name)) ?? deviceSensors[0];
+    if (!ping) return;
+    sparklines[`${name}/latency`] = {
+      objid:  ping.objid,
+      values: extractChannelValues(sparklineResults[i]).slice(-12),
+    };
+  });
+
+  const result: SucursalesDashboard = { sucursales, onlineCount, offlineCount, alerts, sparklines };
   setCache(cacheKey, result);
   return result;
+}
+
+// ─── Endpoint de historial: tipos y función de servicio ───────────────────────
+
+export interface HistoryPoint {
+  timestamp: string; // ISO 8601
+  value:     number;
+}
+
+export interface HistoryStats {
+  max:     number; avg: number; min: number;
+  prevMax: number; prevAvg: number; prevMin: number;
+}
+
+export interface HistoryData {
+  objid:      number;
+  sensorName: string;
+  range:      HistoryRange;
+  points:     HistoryPoint[];
+  stats:      HistoryStats;
+}
+
+/**
+ * Parsea el formato de fecha PRTG "DD.MM.YYYY HH:MM:SS" a ISO 8601.
+ * new Date() no puede parsear el formato de PRTG directamente en Node.js.
+ */
+function parsePrtgDatetime(prtgDate: string): string {
+  // Format: "22.03.2026 10:00:00"
+  const clean = prtgDate.replace(/\s*(AM|PM)\s*[+-]\d{4}$/i, '').trim();
+  const [datePart, timePart] = clean.split(' ');
+  const [day, month, year]   = datePart.split('.');
+  return new Date(`${year}-${month}-${day}T${timePart ?? '00:00:00'}Z`).toISOString();
+}
+
+function computeStats(values: number[]): { max: number; avg: number; min: number } {
+  if (values.length === 0) return { max: 0, avg: 0, min: 0 };
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const avg = Math.round((values.reduce((s, v) => s + v, 0) / values.length) * 10) / 10;
+  return { max, avg, min };
+}
+
+/**
+ * Obtiene datos históricos de un sensor PRTG con estadísticas del período actual
+ * y del período previo (para calcular deltas en KPI cards).
+ */
+export async function getHistoryData(objid: number, range: HistoryRange): Promise<HistoryData> {
+  const now     = new Date();
+  const cfg     = RANGE_CONFIG[range];
+  const prevEnd = new Date(now.getTime() - cfg.hours * 3_600_000);
+
+  const [currentHistdata, prevHistdata, sensorDetail] = await Promise.all([
+    getHistoricData(objid, range, now),
+    getHistoricData(objid, range, prevEnd),
+    getSensorDetail(objid),
+  ]);
+
+  const currentValues = extractChannelValues(currentHistdata);
+  const prevValues    = extractChannelValues(prevHistdata);
+
+  const points: HistoryPoint[] = currentHistdata
+    .map(p => {
+      const value = extractChannelValues([p])[0];
+      if (value === undefined) return null;
+      // PRTG datetime format is "22.03.2026 10:00:00" (German locale) — NOT parseable by new Date().
+      return { timestamp: parsePrtgDatetime(p.datetime as string), value };
+    })
+    .filter((p): p is HistoryPoint => p !== null);
+
+  const currentStats = computeStats(currentValues);
+  const prevStats    = computeStats(prevValues);
+
+  return {
+    objid,
+    sensorName: sensorDetail?.name ?? `Sensor ${objid}`,
+    range,
+    points,
+    stats: {
+      max:     currentStats.max,
+      avg:     currentStats.avg,
+      min:     currentStats.min,
+      prevMax: prevStats.max,
+      prevAvg: prevStats.avg,
+      prevMin: prevStats.min,
+    },
+  };
 }

@@ -180,3 +180,41 @@ export async function getSucursales(req: Request, res: Response): Promise<void> 
     sendServerError(res);
   }
 }
+
+const VALID_RANGES: ReadonlySet<string> = new Set(['1h', '24h', '7d', '30d']);
+
+/** GET /:clientSlug/dashboards/history?objid=<n>&range=<1h|24h|7d|30d> */
+export async function getHistory(req: Request, res: Response): Promise<void> {
+  try {
+    const access = await resolveClientAccess(req, res);
+    if (!access) return;
+
+    const { objid: objidStr, range } = req.query as Record<string, string | undefined>;
+
+    const objid = Number(objidStr);
+    if (!objidStr || !Number.isInteger(objid) || objid <= 0) {
+      sendError(res, 400, 'El parámetro objid debe ser un entero positivo.');
+      return;
+    }
+    if (!range || !VALID_RANGES.has(range)) {
+      sendError(res, 400, 'El parámetro range debe ser 1h, 24h, 7d o 30d.');
+      return;
+    }
+
+    const data = await DashboardsService.getHistoryData(objid, range as import('../prtg/prtg.client').HistoryRange);
+
+    await audit({
+      usuario_id: req.user!.sub,
+      email:      req.user!.email,
+      cliente_id: access.clienteId,
+      accion:     AuditAction.DASHBOARD_VIEW,
+      dashboard:  'history',
+      ip_origen:  getClientIp(req),
+      resultado:  AuditResult.OK,
+    });
+    sendOk(res, data);
+  } catch (err) {
+    logger.error('Error en dashboard history', { error: err });
+    sendServerError(res);
+  }
+}

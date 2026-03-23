@@ -9,6 +9,7 @@ const router = Router({ mergeParams: true }); // Para acceder a :clientSlug del 
 // Todas las rutas requieren autenticación + verificación de acceso al cliente
 router.use(authenticate, requireClientAccess);
 
+router.get('/history',    DashboardsController.getHistory);
 router.get('/',           DashboardsController.getAvailable);
 router.get('/servers',    DashboardsController.getServers);
 router.get('/backups',    DashboardsController.getBackups);

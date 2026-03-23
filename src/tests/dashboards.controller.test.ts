@@ -15,11 +15,11 @@ jest.mock('../modules/clients/clients.service', () => ({
 
 jest.mock('../modules/dashboards/dashboards.service', () => ({
   getAvailableDashboards: jest.fn().mockResolvedValue([]),
-  getVmwareDashboard:     jest.fn().mockResolvedValue({ hosts: [], alerts: [] }),
+  getVmwareDashboard:     jest.fn().mockResolvedValue({ hosts: [], alerts: [], sparklines: {} }),
   getBackupsDashboard:    jest.fn().mockResolvedValue({ successRate7d: 0, devices: [], alerts: [] }),
   getNetworkingDashboard: jest.fn().mockResolvedValue({ devices: [], switches: [], ptpAntennas: [], alerts: [] }),
   getWindowsDashboard:    jest.fn().mockResolvedValue({ servers: [], alerts: [] }),
-  getSucursalesDashboard: jest.fn().mockResolvedValue({ sucursales: [], onlineCount: 0, offlineCount: 0, alerts: [] }),
+  getSucursalesDashboard: jest.fn().mockResolvedValue({ sucursales: [], onlineCount: 0, offlineCount: 0, alerts: [], sparklines: {} }),
 }));
 
 jest.mock('../middleware/auditLogger', () => ({
@@ -89,7 +89,7 @@ function makeRes() {
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetAvailable.mockResolvedValue([]);
-  mockGetVmware.mockResolvedValue({ hosts: [], alerts: [] });
+  mockGetVmware.mockResolvedValue({ hosts: [], alerts: [], sparklines: {} });
 });
 
 describe('resolveClientAccess — cliente no encontrado / inactivo', () => {
