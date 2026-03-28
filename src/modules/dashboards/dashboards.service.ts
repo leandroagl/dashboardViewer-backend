@@ -440,7 +440,8 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
       .map(s => {
         let freeGb: number | null  = null;
         let totalGb: number | null = null;
-        if (/logical.?disk|disk.?free/i.test(s.name)) {
+        const isDiskSensor = /logical.?disk|disk.?free/i.test(s.name);
+        if (isDiskSensor) {
           const chs = diskChannelsById.get(s.objid);
           freeGb    = rawBytesToGb(chs?.find(c => /^free.?bytes$/i.test(c.name))?.lastvalue_raw);
           if (freeGb != null) {
@@ -453,10 +454,20 @@ export async function getBackupsDashboard(prtgGroup: string, extraProbes: string
         const jobChannels   = veeamChannelsById.get(s.objid);
         const lastRunValue  = jobChannels?.find(c => /last.?job.?run/i.test(c.name))?.lastvalue;
         if (lastRunValue) setLastJobRun(s.objid, lastRunValue);
+
+        // Sensores de disco: status basado en espacio usado (igual que VMware datastores).
+        // Ignora el estado PRTG para evitar falsos positivos por umbrales mal configurados.
+        let lastStatus = normalizePrtgStatus(s.status_raw);
+        if (isDiskSensor) {
+          const freePct = parseFloat(s.lastvalue) || 0;
+          const usedPct = 100 - freePct;
+          lastStatus = usedPct > 95 ? "error" : usedPct > 85 ? "warning" : "ok";
+        }
+
         return {
           name:        s.name,
-          lastStatus:  normalizePrtgStatus(s.status_raw),
-          lastMessage: s.message,
+          lastStatus,
+          lastMessage: s.message.replace(/<[^>]+>/g, '').trim(),
           lastValue:   isVeeamSensor ? (getLastJobRun(s.objid) ?? '') : s.lastvalue,
           freeGb,
           totalGb,
@@ -638,10 +649,10 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
   const winDiskChannelsByServer = new Map<string, PrtgChannel[] | null>();
   diskEntries.forEach(([name], i) => winDiskChannelsByServer.set(name, winDiskChannelResults[i]));
 
-  // PRTG "Memory" sensor reporta % libre → convertir a % usado para el gauge
+  // PRTG "Memory" y "Disk Free Space" reportan % libre → convertir a % usado para barras y gauges
   const parseWinFloat = (val: string): number =>
     parseFloat(val.replace(",", ".").replace(/[^0-9.]/g, "")) || 0;
-  const memFreeToUsed = (val: string): string => {
+  const freePctToUsed = (val: string): string => {
     if (!val.includes("%")) return val;
     const used = Math.round((100 - parseWinFloat(val)) * 10) / 10;
     return `${used} %`;
@@ -655,8 +666,8 @@ export async function getWindowsDashboard(prtgGroup: string, extraProbes: string
       name,
       status: normalizePrtgStatus(data.worstStatus),
       cpu:    data.cpu    ? { value: data.cpu.lastvalue,                 status: normalizePrtgStatus(data.cpu.status_raw)    } : placeholder(),
-      memory: data.memory ? { value: memFreeToUsed(data.memory.lastvalue), status: normalizePrtgStatus(data.memory.status_raw) } : placeholder(),
-      disk:   data.disk   ? { value: data.disk.lastvalue, status: normalizePrtgStatus(data.disk.status_raw), freeGb } : { value: 'N/A', status: 'unknown' as SensorStatus, freeGb: null },
+      memory: data.memory ? { value: freePctToUsed(data.memory.lastvalue), status: normalizePrtgStatus(data.memory.status_raw) } : placeholder(),
+      disk:   data.disk   ? { value: freePctToUsed(data.disk.lastvalue),   status: normalizePrtgStatus(data.disk.status_raw), freeGb } : { value: 'N/A', status: 'unknown' as SensorStatus, freeGb: null },
       uptime: data.uptime ? { value: data.uptime.lastvalue, status: normalizePrtgStatus(data.uptime.status_raw) } : placeholder(),
     };
   });
@@ -819,10 +830,21 @@ function computeStats(values: number[]): { max: number; avg: number; min: number
 }
 
 const CHANNEL_PATTERNS: Record<string, RegExp> = {
-  cpu:   /cpu/i,
-  ram:   /memory/i,
-  diskR: /disk.*read|read/i,
-  diskW: /disk.*write|write/i,
+  // VMware/generic: canal con "CPU" en el nombre.
+  // Windows WMI CPU Load: el canal agregado se llama "Total" (sin "cpu").
+  cpu:      /cpu|^total$/i,
+  ram:      /memory/i,
+  diskR:    /disk.*read|read/i,
+  diskW:    /disk.*write|write/i,
+  // Networking: selecciona el canal de VELOCIDAD (bits/s), no el de volumen acumulado.
+  // PRTG SNMP Traffic puede exponer "Traffic Total (speed)" + "Traffic Total (volume)",
+  // o bien "Traffic Total" / "Traffic In" / "Traffic Out" sin sufijo (depende del sensor/versión).
+  // El lookahead negativo excluye cualquier variante con "(volume)" en el nombre.
+  traffic:  /traffic(?!.*volume)/i,
+  uptime:   /uptime/i,
+  // Windows WMI Disk Free Space: canales "Free Space C:", "Free Space E:", etc. (porcentaje).
+  // "Free Bytes X:" son bytes — ignorar en favor de los canales de porcentaje.
+  diskFree: /free\s*space/i,
 };
 
 /**

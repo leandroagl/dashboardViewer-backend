@@ -64,9 +64,9 @@ interface PrtgHistoricResponse {
 // Exported so dashboards.service.ts can reuse it for getHistoryData
 export const RANGE_CONFIG: Record<HistoryRange, { avg: number; hours: number }> = {
   '1h':  { avg: 0,     hours: 1   },
-  '24h': { avg: 3600,  hours: 24  },
-  '7d':  { avg: 86400, hours: 168 },
-  '30d': { avg: 86400, hours: 720 },
+  '24h': { avg: 900,   hours: 24  },
+  '7d':  { avg: 3600,  hours: 168 },
+  '30d': { avg: 21600, hours: 720 },
 };
 
 function prtgDateStr(d: Date): string {
