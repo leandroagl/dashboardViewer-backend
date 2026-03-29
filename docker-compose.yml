@@ -19,10 +19,17 @@ services:
 
   backend:
     build: .
+    container_name: ondra-backend
     restart: unless-stopped
     env_file: .env
     environment:
       DB_HOST: postgres   # override: dentro de Docker el host es el nombre del servicio
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
       postgres:
         condition: service_healthy

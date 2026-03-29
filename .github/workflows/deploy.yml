@@ -1,0 +1,115 @@
+name: Test and Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ── Job 1: Integration tests ──────────────────────────────────────────────────
+  test:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ${{ secrets.TEST_DB_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.TEST_DB_PASSWORD }}
+          POSTGRES_DB: ondra_monitor_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ${{ secrets.TEST_DB_USER }} -d ondra_monitor_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write .env.test
+        run: |
+          cat > .env.test << 'ENVEOF'
+          NODE_ENV=test
+          PORT=3001
+          DB_HOST=localhost
+          DB_PORT=5432
+          DB_NAME=ondra_monitor_test
+          DB_USER=${{ secrets.TEST_DB_USER }}
+          DB_PASSWORD=${{ secrets.TEST_DB_PASSWORD }}
+          JWT_ACCESS_SECRET=ci_test_access_secret_minimum_32_characters_padding
+          JWT_REFRESH_SECRET=ci_test_refresh_secret_minimum_32_characters_padding
+          JWT_ACCESS_EXPIRES_IN=5h
+          JWT_REFRESH_EXPIRES_IN=7d
+          PRTG_BASE_URL=http://localhost:9999
+          PRTG_API_TOKEN=test_token
+          PRTG_REJECT_UNAUTHORIZED=false
+          PRTG_SUBGROUPS=TestGroup
+          COOKIE_DOMAIN=localhost
+          COOKIE_SECURE=false
+          ENVEOF
+
+      - name: Run tests
+        run: npm test
+
+  # ── Job 2: Deploy (solo si tests pasan) ──────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy backend
+        run: |
+          ssh -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} bash << 'SSHEOF'
+            set -e
+
+            # Verificar que .env existe y tiene las variables críticas
+            cd ${{ secrets.BACKEND_DIR }}
+            for VAR in DB_HOST DB_NAME JWT_ACCESS_SECRET PRTG_BASE_URL; do
+              if ! grep -q "^${VAR}=" .env; then
+                echo "ERROR: Variable ${VAR} missing from .env" >&2
+                exit 1
+              fi
+            done
+
+            # Deploy con flock para evitar deploys concurrentes
+            flock -n /tmp/ondra-backend-deploy.lock bash -c '
+              set -e
+              cd ${{ secrets.BACKEND_DIR }}
+              echo "--- Pulling latest code ---"
+              git pull origin main
+              echo "--- Rebuilding backend container ---"
+              docker compose up -d --build backend
+              echo "--- Waiting for healthcheck ---"
+              timeout 60 bash -c "
+                until [ \"\$(docker inspect --format=\"{{.State.Health.Status}}\" ondra-backend 2>/dev/null)\" = \"healthy\" ]; do
+                  sleep 3
+                done
+              "
+              echo "--- Deploy complete ---"
+              docker compose ps backend
+            ' || { echo "ERROR: Another deploy is already running or deploy failed"; exit 1; }
+          SSHEOF
