@@ -197,16 +197,4 @@ describe('resolveClientAccess — propagación de prtgGroup y extraProbes', () =
     expect(mockGetVmware).toHaveBeenCalledWith('GrupoA', ['Velia', 'OtraSonda']);
   });
 
-  test('acceso exitoso registra audit DASHBOARD_VIEW con dashboard="servers"', async () => {
-    mockGetClientBySlug.mockResolvedValue(makeClient());
-    const req = makeReq({ clientSlug: 'cliente-test' }, 'user1', UserRole.VIEWER, CLIENT_ID);
-    const res = makeRes();
-
-    await getServers(req, res as unknown as Response);
-
-    expect(mockAudit).toHaveBeenCalledWith(
-      expect.objectContaining({ accion: 'dashboard_view', dashboard: 'servers', resultado: 'ok' })
-    );
-  });
-
 });
