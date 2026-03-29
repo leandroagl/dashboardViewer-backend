@@ -21,6 +21,8 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    environment:
+      DB_HOST: postgres   # override: dentro de Docker el host es el nombre del servicio
     depends_on:
       postgres:
         condition: service_healthy
