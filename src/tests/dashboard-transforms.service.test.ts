@@ -368,7 +368,7 @@ describe('getWindowsDashboard', () => {
 
     const result = await getWindowsDashboard(GROUP);
 
-    expect(result.servers[0].disk.value).toBe('60 %');
+    expect(result.servers[0].disk.value).toBe('40 %');  // 60 % libre → 40 % usado
     expect(result.servers[0].disk.status).toBe('ok');
   });
 
