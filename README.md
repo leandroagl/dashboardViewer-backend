@@ -110,8 +110,7 @@ Ubuntu no incluye Docker en sus repositorios base. Se instala desde el repositor
 ```bash
 # Agregar la clave GPG oficial de Docker
 sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
-  | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 sudo chmod a+r /etc/apt/keyrings/docker.gpg
 
 # Agregar el repositorio de Docker
@@ -159,11 +158,13 @@ sudo ls /etc/letsencrypt/live/monitor.ondra.com.ar/
 >
 > Tras la renovación es necesario recargar nginx: agregar un deploy hook en
 > `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`:
+>
 > ```bash
 > #!/bin/sh
 > docker compose -f /opt/ondra/dashboardViewer-backend/docker-compose.yml \
 >   exec frontend nginx -s reload
 > ```
+>
 > ```bash
 > sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
 > ```
@@ -248,6 +249,7 @@ docker compose up -d --build
 ```
 
 Docker Compose:
+
 1. Levanta PostgreSQL y espera a que esté saludable (`healthcheck`)
 2. Levanta el backend — el `entrypoint.sh` ejecuta las migraciones automáticamente
 3. Levanta el frontend (nginx con el build de Angular)
@@ -269,8 +271,8 @@ docker compose exec backend node dist/config/database/seed.js
 ### 8. Verificar el deploy
 
 ```bash
-# Comprobar que el backend responde
-curl http://localhost:3000/health
+# Comprobar que el backend responde (puerto 3000 solo existe dentro de la red Docker)
+docker compose exec backend wget -qO- http://localhost:3000/health
 
 # Ver los logs de todos los servicios
 docker compose logs -f
